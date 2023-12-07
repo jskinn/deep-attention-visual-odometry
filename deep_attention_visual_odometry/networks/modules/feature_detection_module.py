@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from deep_attention_visual_odometry.types import FeaturePoints
+from deep_attention_visual_odometry.base_types import FeaturePoints
 from .upscale_with_skip_module import UpscaleWithSkipModule
 
 

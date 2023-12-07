@@ -24,6 +24,47 @@ class SimpleCameraModelParameters:
     def cx(self) -> torch.Tensor:
         return self.data[self.CX]
 
+    @classmethod
+    def make_from_floats(
+        cls,
+        cx: float,
+        cy: float,
+        f: float,
+        a1: float,
+        a2: float,
+        a3: float,
+        b1: float,
+        b2: float,
+        b3: float,
+        tx: float,
+        ty: float,
+        tz: float,
+    ):
+        return cls(
+            make_camera_parameters(cx, cy, f, a1, a2, a3, b1, b2, b3, tx, ty, tz)
+        )
+
+    @classmethod
+    def stack_from_tensors(
+        cls,
+        cx: torch.Tensor,
+        cy: torch.Tensor,
+        f: torch.Tensor,
+        a1: torch.Tensor,
+        a2: torch.Tensor,
+        a3: torch.Tensor,
+        b1: torch.Tensor,
+        b2: torch.Tensor,
+        b3: torch.Tensor,
+        tx: torch.Tensor,
+        ty: torch.Tensor,
+        tz: torch.Tensor,
+        dim: int = 0,
+    ):
+        return cls(
+            stack_camera_parameters(cx, cy, f, a1, a2, a3, b1, b2, b3, tx, ty, tz, dim)
+        )
+
 
 def make_camera_parameters(
     cx: float,
@@ -55,6 +96,6 @@ def stack_camera_parameters(
     tx: torch.Tensor,
     ty: torch.Tensor,
     tz: torch.Tensor,
-    dim: int = 0
+    dim: int = 0,
 ) -> torch.Tensor:
     return torch.stack([cx, cy, f, a1, a2, a3, b1, b2, b3, tx, ty, tz], dim=dim)

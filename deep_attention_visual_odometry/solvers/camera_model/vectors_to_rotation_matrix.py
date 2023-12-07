@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import NamedTuple, Self
 import torch
 
 
@@ -14,17 +14,7 @@ class RotationMatrix(NamedTuple):
     r9: torch.Tensor
 
 
-class RotationMatrixAndJacobian(NamedTuple):
-    r1: torch.Tensor
-    r2: torch.Tensor
-    r3: torch.Tensor
-    r4: torch.Tensor
-    r5: torch.Tensor
-    r6: torch.Tensor
-    r7: torch.Tensor
-    r8: torch.Tensor
-    r9: torch.Tensor
-
+class RotationMatrixDerivatives(NamedTuple):
     dr1_da1: torch.Tensor
     dr1_da2: torch.Tensor
     dr1_da3: torch.Tensor
@@ -73,183 +63,147 @@ class RotationMatrixAndJacobian(NamedTuple):
     dr9_db3: torch.Tensor
 
 
-class _MatrixAndIntermediates(NamedTuple):
-    r1: torch.Tensor
-    r2: torch.Tensor
-    r3: torch.Tensor
-    r4: torch.Tensor
-    r5: torch.Tensor
-    r6: torch.Tensor
-    r7: torch.Tensor
-    r8: torch.Tensor
-    r9: torch.Tensor
-    a1_squared: torch.Tensor
-    a2_squared: torch.Tensor
-    a3_squared: torch.Tensor
+class _Intermediates(NamedTuple):
+    a_squared: torch.Tensor
     a_length: torch.Tensor
     a_square_length: torch.Tensor
     project_b_onto_a: torch.Tensor
-    b_prime_1: torch.Tensor
-    b_prime_2: torch.Tensor
-    b_prime_3: torch.Tensor
-    b_prime_1_squared: torch.Tensor
-    b_prime_2_squared: torch.Tensor
-    b_prime_3_squared: torch.Tensor
+    b_prime: torch.Tensor
+    b_prime_squared: torch.Tensor
     b_prime_length: torch.Tensor
     b_prime_square_length: torch.Tensor
 
 
-# @torch.jit.script
-def _make_rotation_matrix_and_intermediates(
-    a1: torch.Tensor,
-    a2: torch.Tensor,
-    a3: torch.Tensor,
-    b1: torch.Tensor,
-    b2: torch.Tensor,
-    b3: torch.Tensor,
-) -> _MatrixAndIntermediates:
+class TwoVectorOrientation:
     """
-    Assemble a pair of 3-vectors into a rotation matrix
-    and some intermediate values necessary for computing the jacobians.
-
-    :return:
+    A rotation matrix made from two basis vectors, that are orthonormalised.
+    Expects a batch dimension, a multiple estimates dimension, and a multiple views dimension,
+    so the input points are BxExMx3
     """
-    # First we need to build the rotation matrix from the forward directions
-    # This starts with two vectors a and b, we normalise a as the first column
-    a1_squared = a1.square()
-    a2_squared = a2.square()
-    a3_squared = a3.square()
-    a_square_length = a1_squared + a2_squared + a3_squared
-    a_length = torch.sqrt(a_square_length)
-    a_dot_b = a1 * b1 + a2 * b2 + a3 * b3
-    # We subtract the component of b parallel to a, and renormalise as the second column
-    project_b_onto_a = a_dot_b / a_square_length
-    b_prime_1 = b1 - a1 * project_b_onto_a
-    b_prime_2 = b2 - a2 * project_b_onto_a
-    b_prime_3 = b3 - a3 * project_b_onto_a
-    b_prime_1_squared = b_prime_1.square()
-    b_prime_2_squared = b_prime_2.square()
-    b_prime_3_squared = b_prime_3.square()
-    b_prime_square_length = b_prime_1_squared + b_prime_2_squared + b_prime_3_squared
-    b_prime_length = torch.sqrt(b_prime_square_length)
-    r1 = a1 / a_length
-    r4 = a2 / a_length
-    r7 = a3 / a_length
-    r2 = b_prime_1 / b_prime_length
-    r5 = b_prime_2 / b_prime_length
-    r8 = b_prime_3 / b_prime_length
-    # The final column is the cross product of the first two columns
-    r3 = r4 * r8 - r5 * r7
-    r6 = r2 * r7 - r1 * r8
-    r9 = r1 * r5 - r2 * r4
-    return _MatrixAndIntermediates(
-        r1=r1,
-        r2=r2,
-        r3=r3,
-        r4=r4,
-        r5=r5,
-        r6=r6,
-        r7=r7,
-        r8=r8,
-        r9=r9,
-        a1_squared=a1_squared,
-        a2_squared=a2_squared,
-        a3_squared=a3_squared,
-        a_length=a_length,
-        a_square_length=a_square_length,
-        project_b_onto_a=project_b_onto_a,
-        b_prime_1=b_prime_1,
-        b_prime_2=b_prime_2,
-        b_prime_3=b_prime_3,
-        b_prime_1_squared=b_prime_1_squared,
-        b_prime_2_squared=b_prime_2_squared,
-        b_prime_3_squared=b_prime_3_squared,
-        b_prime_length=b_prime_length,
-        b_prime_square_length=b_prime_square_length,
-    )
+
+    def __init__(self, a: torch.Tensor, b: torch.Tensor):
+        self._a = a
+        self._b = b
+        self._rotation_matrix = None
+        self._gradients = None
+        self._intermediates = None
+
+    @property
+    def a(self) -> torch.Tensor:
+        return self._a
+
+    @property
+    def b(self) -> torch.Tensor:
+        return self._b
+
+    def get_rotation_matrix(self) -> RotationMatrix:
+        """
+        :returns: named tuple of BxExM tensors
+        """
+        if self._rotation_matrix is None:
+            intermediates = self._get_intermediates()
+            col_1 = self._a / intermediates.a_length
+            col_2 = intermediates.b_prime / intermediates.b_prime_length
+            # The final column is the cross product of the first two columns
+            col_3 = torch.linalg.cross(col_1, col_2, dim=-1)
+            self._rotation_matrix = RotationMatrix(
+                r1=col_1[:, :, :, 0],
+                r2=col_2[:, :, :, 0],
+                r3=col_3[:, :, :, 0],
+                r4=col_1[:, :, :, 1],
+                r5=col_2[:, :, :, 1],
+                r6=col_3[:, :, :, 1],
+                r7=col_1[:, :, :, 2],
+                r8=col_2[:, :, :, 2],
+                r9=col_3[:, :, :, 0],
+            )
+        return self._rotation_matrix
+
+    def get_derivatives(self) -> RotationMatrixDerivatives:
+        """
+        :returns: Named tuple of BxExM tensors
+        """
+        if self._gradients is None:
+            intermediates = self._get_intermediates()
+            rotation_matrix = self.get_rotation_matrix()
+            self._gradients = _compute_derivatives(
+                self._a, self._b, rotation_matrix, intermediates
+            )
+        return self._gradients
+
+    def add(self, delta: torch.Tensor) -> Self:
+        return TwoVectorOrientation(
+            a=self._a + delta[:, :, :, 0:3], b=self._b + delta[:, :, :, 3:6]
+        )
+
+    def _get_intermediates(self) -> _Intermediates:
+        if self._intermediates is None:
+            # First we need to build the rotation matrix from the forward directions
+            # This starts with two vectors a and b, we normalise a as the first column
+            a_squared = self._a.square()
+            a_square_length = torch.sum(a_squared, dim=-1)
+            a_length = torch.sqrt(a_square_length)
+            a_dot_b = (self._a * self._b).sum(dim=-1)
+            # We subtract the component of b parallel to a, and renormalise as the second column
+            project_b_onto_a = a_dot_b / a_square_length
+            b_prime = self._b - self._a * project_b_onto_a[:, None]
+            b_prime_squared = b_prime.square()
+            b_prime_square_length = b_prime_squared.sum(dim=-1)
+            b_prime_length = torch.sqrt(b_prime_square_length)
+            self._intermediates = _Intermediates(
+                a_squared=a_squared,
+                a_length=a_length,
+                a_square_length=a_square_length,
+                project_b_onto_a=project_b_onto_a,
+                b_prime=b_prime,
+                b_prime_squared=b_prime_squared,
+                b_prime_square_length=b_prime_square_length,
+                b_prime_length=b_prime_length,
+            )
+        return self._intermediates
 
 
-# @torch.jit.script
-def make_rotation_matrix(
-    a1: torch.Tensor,
-    a2: torch.Tensor,
-    a3: torch.Tensor,
-    b1: torch.Tensor,
-    b2: torch.Tensor,
-    b3: torch.Tensor,
-) -> RotationMatrix:
-    """
-    Compute a rotation matrix from two vectors, a and b.
-    A is normalised as the first column of R,
-    b is orthogonalised as b - (a . b) a, and then normalised as the second column.
-    The third column is the cross product of a and the orthonormalised b.
+def _compute_derivatives(
+    a_vec: torch.Tensor,
+    b_vec: torch.Tensor,
+    rotation_matrix: RotationMatrix,
+    intermediates: _Intermediates,
+) -> RotationMatrixDerivatives:
+    a1 = a_vec[:, :, :, 0]
+    a2 = a_vec[:, :, :, 1]
+    a3 = a_vec[:, :, :, 2]
 
-    :return:
-    """
-    matrix_and_intermediates = _make_rotation_matrix_and_intermediates(
-        a1, a2, a3, b1, b2, b3
-    )
-    return RotationMatrix(
-        r1=matrix_and_intermediates.r1,
-        r2=matrix_and_intermediates.r2,
-        r3=matrix_and_intermediates.r3,
-        r4=matrix_and_intermediates.r4,
-        r5=matrix_and_intermediates.r5,
-        r6=matrix_and_intermediates.r6,
-        r7=matrix_and_intermediates.r7,
-        r8=matrix_and_intermediates.r8,
-        r9=matrix_and_intermediates.r9,
-    )
+    b1 = b_vec[:, :, :, 0]
+    b2 = b_vec[:, :, :, 1]
+    b3 = b_vec[:, :, :, 2]
 
+    a1_squared = intermediates.a_squared[:, :, :, 0]
+    a2_squared = intermediates.a_squared[:, :, :, 1]
+    a3_squared = intermediates.a_squared[:, :, :, 2]
+    a_length = intermediates.a_length
+    a_square_length = intermediates.a_square_length
 
-@torch.jit.script
-def make_rotation_matrix_and_derivatives(
-    a1: torch.Tensor,
-    a2: torch.Tensor,
-    a3: torch.Tensor,
-    b1: torch.Tensor,
-    b2: torch.Tensor,
-    b3: torch.Tensor,
-) -> RotationMatrixAndJacobian:
-    """
-    Build a rotation matrix from two vectors, and return both the matrix itself and it's derivatives
-    :return: A named tuple with every element of the 3x3 rotation matrix, and its derivative w.r.t. each input.
-    """
-    # First make the rotation matrix
-    matrix_and_intermediates = _make_rotation_matrix_and_intermediates(
-        a1, a2, a3, b1, b2, b3
-    )
+    project_b_onto_a = intermediates.project_b_onto_a
+    b_prime_1 = intermediates.b_prime[:, :, :, 0]
+    b_prime_2 = intermediates.b_prime[:, :, :, 1]
+    b_prime_3 = intermediates.b_prime[:, :, :, 2]
+    b_prime_1_squared = intermediates.b_prime_squared[:, :, :, 0]
+    b_prime_2_squared = intermediates.b_prime_squared[:, :, :, 1]
+    b_prime_3_squared = intermediates.b_prime_squared[:, :, :, 2]
+    b_prime_length = intermediates.b_prime_length
+    b_prime_square_length = intermediates.b_prime_square_length
 
-    a1_squared = matrix_and_intermediates.a1_squared
-    a2_squared = matrix_and_intermediates.a2_squared
-    a3_squared = matrix_and_intermediates.a3_squared
-    a_length = matrix_and_intermediates.a_length
-    a_square_length = matrix_and_intermediates.a_square_length
-
-    project_b_onto_a = matrix_and_intermediates.project_b_onto_a
-    b_prime_1 = matrix_and_intermediates.b_prime_1
-    b_prime_2 = matrix_and_intermediates.b_prime_2
-    b_prime_3 = matrix_and_intermediates.b_prime_3
-    b_prime_1_squared = matrix_and_intermediates.b_prime_1_squared
-    b_prime_2_squared = matrix_and_intermediates.b_prime_2_squared
-    b_prime_3_squared = matrix_and_intermediates.b_prime_3_squared
-    b_prime_length = matrix_and_intermediates.b_prime_length
-    b_prime_square_length = matrix_and_intermediates.b_prime_square_length
-
-    r1 = matrix_and_intermediates.r1
-    r2 = matrix_and_intermediates.r2
-    r3 = matrix_and_intermediates.r3
-    r4 = matrix_and_intermediates.r4
-    r5 = matrix_and_intermediates.r5
-    r6 = matrix_and_intermediates.r6
-    r7 = matrix_and_intermediates.r7
-    r8 = matrix_and_intermediates.r8
-    r9 = matrix_and_intermediates.r9
+    r1 = rotation_matrix.r1
+    r2 = rotation_matrix.r2
+    r4 = rotation_matrix.r4
+    r5 = rotation_matrix.r5
+    r7 = rotation_matrix.r7
+    r8 = rotation_matrix.r8
 
     a_length_cubed = a_length * a_square_length
-    a1_a2 = a1 * a2
-    a1_a3 = a1 * a3
-    a2_a3 = a2 * a3
+    a1_a2 = a_vec[:, :, :, 0] * a_vec[:, :, :, 1]
+    a1_a3 = a_vec[:, :, :, 0] * a_vec[:, :, :, 2]
+    a2_a3 = a_vec[:, :, :, 1] * a_vec[:, :, :, 2]
 
     # The first column only vary with a, through the normalisation
     dr1_da1 = (a2_squared + a3_squared) / a_length_cubed
@@ -408,16 +362,7 @@ def make_rotation_matrix_and_derivatives(
     dr9_db2 = r1 * dr5_db2 - r4 * dr2_db2
     dr9_db3 = r1 * dr5_db3 - r4 * dr2_db3
 
-    return RotationMatrixAndJacobian(
-        r1=r1,
-        r2=r2,
-        r3=r3,
-        r4=r4,
-        r5=r5,
-        r6=r6,
-        r7=r7,
-        r8=r8,
-        r9=r9,
+    return RotationMatrixDerivatives(
         dr1_da1=dr1_da1,
         dr1_da2=dr1_da2,
         dr1_da3=dr1_da3,

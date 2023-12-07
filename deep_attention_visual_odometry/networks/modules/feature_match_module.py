@@ -1,6 +1,6 @@
 import torch.nn as nn
 import torch.nn.functional as fn
-from deep_attention_visual_odometry.types import FeaturePoints, MatchedPoints
+from deep_attention_visual_odometry.base_types import FeaturePoints, MatchedPoints
 
 
 class FeatureMatchModule(nn.Module):
