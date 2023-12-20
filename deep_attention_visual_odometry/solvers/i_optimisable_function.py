@@ -9,6 +9,7 @@ class IOptimisableFunction(ABC):
     Specifically supposed to support lazy evaluation of the error and gradient.
     Should also support batching of the parameters, and multiple simultaneous estimates
     """
+
     @property
     @abstractmethod
     def batch_size(self) -> int:
@@ -48,15 +49,7 @@ class IOptimisableFunction(ABC):
         pass
 
     @abstractmethod
-    def masked_add(self, parameters: torch.Tensor, mask: torch.Tensor) -> Self:
-        """Return a new instance of this function, updating only a subset of the estimates/batches.
-        The mask parameter should be a BxE tensor indicating which elements to update.
-        The parameters then should be a MxP tensor containing new values that are added where the mask is true.
-        """
-        pass
-
-    @abstractmethod
-    def masked_update(self, other: Self, parameters: torch.Tensor, mask: torch.Tensor):
+    def masked_update(self, other: Self, mask: torch.Tensor) -> Self:
         """
         The operation we need to be able to do is to keep values from the current parameters where false,
         and where true set them to the values from another instance, plus a delta.
