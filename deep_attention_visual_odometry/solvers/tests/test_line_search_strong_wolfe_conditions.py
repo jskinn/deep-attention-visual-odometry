@@ -1,70 +1,15 @@
-from typing import Self
 import unittest
 import torch
-from deep_attention_visual_odometry.solvers.i_optimisable_function import (
-    IOptimisableFunction,
-)
 from deep_attention_visual_odometry.solvers.line_search_strong_wolfe_conditions import (
     LineSearchStrongWolfeConditions,
 )
-
-
-class ExampleFunctionDistanceToPoint(IOptimisableFunction):
-    def __init__(self, parameters: torch.Tensor, target_points: torch.Tensor):
-        self.parameters = parameters
-        self.target_points = target_points
-
-    @property
-    def batch_size(self) -> int:
-        return self.parameters.size(0)
-
-    @property
-    def num_estimates(self) -> int:
-        return self.parameters.size(1)
-
-    @property
-    def num_parameters(self) -> int:
-        return self.parameters.size(2)
-
-    @property
-    def device(self) -> torch.device:
-        return self.parameters.device
-
-    def get_error(self) -> torch.Tensor:
-        """Get the error of the function at the current point. BxE"""
-        return (self.parameters - self.target_points).square().sum(dim=2)
-
-    def get_gradient(self) -> torch.Tensor:
-        """Get the gradient of the function w.r.t. each of the parameters. BxExP"""
-        return 2.0 * (self.parameters - self.target_points)
-
-    def add(self, parameters: torch.Tensor) -> Self:
-        """Return a new instance of this function at a new set of parameters.
-        Used for the optimisation step.
-        Input tensor should be BxExN, the same shape as the output of 'get_gradient'
-        """
-        return ExampleFunctionDistanceToPoint(
-            parameters=self.parameters + parameters, target_points=self.target_points
-        )
-
-    def masked_update(self, other: Self, mask: torch.Tensor) -> Self:
-        """
-        The operation we need to be able to do is to keep values from the current parameters where false,
-        and where true set them to the values from another instance, plus a delta.
-
-        This might be able to be expressed as two functions, add(..) and then update(...) to merge.
-
-        We want to retain already-computed gradients and errors as much as possible.
-        """
-        mask = mask[:, :, None].tile(1, 1, self.num_parameters)
-        new_parameters = torch.where(mask, other.parameters, self.parameters)
-        return ExampleFunctionDistanceToPoint(
-            parameters=new_parameters, target_points=self.target_points
-        )
+from deep_attention_visual_odometry.solvers.tests.example_function_distance_to_point import (
+    ExampleFunctionDistanceToPoint,
+)
 
 
 class TestLineSearchStrongWolfeConditions(unittest.TestCase):
-    def test_returns_instance_of_function_to_optimise(self):
+    def test_returns_instance_of_function_to_optimise_and_step_distance(self):
         target_points = torch.tensor([20.0, 10.0]).reshape(1, 1, 2)
         initial_guess = torch.zeros_like(target_points)
         search_direction = torch.tensor([0.0, 1.0]).reshape(1, 1, 2)
@@ -73,10 +18,11 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
         )
         subject = LineSearchStrongWolfeConditions(max_step_size=10.0, zoom_iterations=5)
 
-        result = subject(function_to_optimise, search_direction)
+        result, step = subject(function_to_optimise, search_direction)
 
         self.assertIsInstance(result, ExampleFunctionDistanceToPoint)
         self.assertNotEqual(result, function_to_optimise)
+        self.assertTrue(torch.equal(step, result.parameters - initial_guess))
 
     def test_searches_in_desired_direction(self):
         target_points = torch.tensor([20.0, 10.0]).reshape(1, 1, 2)
@@ -87,7 +33,7 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
         )
         subject = LineSearchStrongWolfeConditions(max_step_size=10.0, zoom_iterations=5)
 
-        result = subject(function_to_optimise, search_direction)
+        result, _ = subject(function_to_optimise, search_direction)
 
         self.assertEqual(result.parameters.shape, (1, 1, 2))
         self.assertGreaterEqual(result.parameters[0, 0, 0], 0.5)
@@ -105,7 +51,7 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
         initial_error = function_to_optimise.get_error()
         subject = LineSearchStrongWolfeConditions(max_step_size=10.0, zoom_iterations=5)
 
-        result = subject(function_to_optimise, search_direction)
+        result, _ = subject(function_to_optimise, search_direction)
 
         self.assertTrue(torch.all(torch.less(result.get_error(), initial_error)))
 
@@ -127,7 +73,7 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
             max_step_size=10.0, zoom_iterations=5, sufficient_decrease=c1, curvature=c2
         )
 
-        result = subject(function_to_optimise, search_direction)
+        result, _ = subject(function_to_optimise, search_direction)
 
         result_alpha = (result.parameters / search_direction).mean()
         result_error = result.get_error().squeeze()
@@ -151,7 +97,7 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
         )
         subject = LineSearchStrongWolfeConditions(max_step_size=10.0, zoom_iterations=5)
 
-        result = subject(function_to_optimise, search_direction)
+        result, _ = subject(function_to_optimise, search_direction)
 
         self.assertEqual(result.parameters.shape, (1, 1, 2))
         self.assertLess(result.parameters[0, 0, 0], 10.0)
@@ -168,7 +114,7 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
             max_step_size=128.0, zoom_iterations=5
         )
 
-        result = subject(function_to_optimise, search_direction)
+        result, _ = subject(function_to_optimise, search_direction)
 
         self.assertEqual(result.parameters.shape, (1, 1, 2))
         self.assertGreater(result.parameters[0, 0, 0], 0.2)
@@ -183,7 +129,7 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
         )
         subject = LineSearchStrongWolfeConditions(max_step_size=2.0, zoom_iterations=5)
 
-        result = subject(function_to_optimise, search_direction)
+        result, _ = subject(function_to_optimise, search_direction)
 
         self.assertEqual(result.parameters.shape, (1, 1, 2))
         self.assertEqual(result.parameters[0, 0, 0], 0.4)
@@ -198,7 +144,7 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
         )
         subject = LineSearchStrongWolfeConditions(max_step_size=10.0, zoom_iterations=5)
 
-        result = subject(function_to_optimise, search_direction)
+        result, _ = subject(function_to_optimise, search_direction)
 
         self.assertEqual(result.parameters.shape, (1, 1, 2))
         self.assertEqual(result.parameters[0, 0, 0], 0.5)
@@ -216,7 +162,7 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
             max_step_size=10.0, zoom_iterations=zoom_iterations
         )
 
-        result = subject(function_to_optimise, search_direction)
+        result, _ = subject(function_to_optimise, search_direction)
 
         self.assertEqual(result.parameters.shape, (1, 1, 2))
         self.assertEqual(result.parameters[0, 0, 0], 1 / (2**zoom_iterations))
@@ -246,7 +192,7 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
         gradient_in_direction = (initial_gradient * search_direction).sum(dim=-1)
         subject = LineSearchStrongWolfeConditions(max_step_size=10.0, zoom_iterations=5)
 
-        result = subject(function_to_optimise, search_direction)
+        result, _ = subject(function_to_optimise, search_direction)
 
         result_alpha = (result.parameters / search_direction).mean(dim=-1)
         result_error = result.get_error()
@@ -273,7 +219,7 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
         subject = LineSearchStrongWolfeConditions(max_step_size=10.0, zoom_iterations=5)
         compiled_subject = torch.compile(subject)
 
-        result = compiled_subject(function_to_optimise, search_direction)
+        result, _ = compiled_subject(function_to_optimise, search_direction)
 
         self.assertEqual(result.parameters.shape, (1, 1, 2))
         self.assertEqual(result.parameters[0, 0, 0], 1.0)
@@ -287,7 +233,7 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
             initial_guess, target_points
         )
         subject = LineSearchStrongWolfeConditions(max_step_size=10.0, zoom_iterations=5)
-        result = subject(function_to_optimise, search_direction)
+        result, _ = subject(function_to_optimise, search_direction)
         result_error = result.get_error()
         self.assertIsNone(initial_guess.grad)
 
@@ -306,7 +252,7 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
             initial_guess, target_points
         )
         subject = LineSearchStrongWolfeConditions(max_step_size=10.0, zoom_iterations=5)
-        result = subject(function_to_optimise, search_direction.reshape(1, 1, 2))
+        result, _ = subject(function_to_optimise, search_direction.reshape(1, 1, 2))
         result_error = result.get_error()
         self.assertIsNone(search_direction.grad)
 

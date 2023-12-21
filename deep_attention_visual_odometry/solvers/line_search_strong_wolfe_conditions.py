@@ -33,7 +33,7 @@ class LineSearchStrongWolfeConditions(nn.Module):
 
     def forward(
         self, function: IOptimisableFunction, search_direction: torch.Tensor
-    ) -> IOptimisableFunction:
+    ) -> tuple[IOptimisableFunction, torch.Tensor]:
         batch_size = function.batch_size
         num_estimates = function.num_estimates
         lower_alpha = torch.zeros(
@@ -191,7 +191,9 @@ class LineSearchStrongWolfeConditions(nn.Module):
             upper_alpha = torch.where(
                 increasing_error, candidate_alpha_wide, upper_alpha
             )
-            upper_candidate_function = upper_candidate_function.masked_update(candidate_function, increasing_error)
+            upper_candidate_function = upper_candidate_function.masked_update(
+                candidate_function, increasing_error
+            )
             # Everything after this point should be else with the above condition
             non_increasing_error = torch.logical_and(
                 zooming, torch.logical_not(increasing_error)
@@ -246,4 +248,4 @@ class LineSearchStrongWolfeConditions(nn.Module):
                 candidate_function, non_increasing_error
             )
 
-        return upper_candidate_function
+        return upper_candidate_function, upper_alpha[:, :, None] * search_direction

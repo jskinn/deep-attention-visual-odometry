@@ -7,18 +7,17 @@ from .i_optimisable_function import IOptimisableFunction
 from .least_squares_utils import find_residuals, find_error, find_error_gradient
 
 
-class BFGSCameraSolver(nn.Module):
+class LearnedBFGSSolver(nn.Module):
     """
-    Use the Broyden-Fletcher-Goldfarb-Shanno algorithm (BFGS) to iteratively optimise an underlying function.
-    Relies on a separate line search algorithm that must satisfy the wolfe conditions.
+    Use the Broyden-Fletcher-Goldfarb-Shanno algorithm (BFGS) to iteratively optimise the various parameters.
+    There are two learned heuristics modifying the algorithm, one as a warp on the search direction,
+    and the other to resample the current
 
-    Why BFGS and not levenberg-marquard?
-    Due to optimising the 3D positions of the points, the number of parameters and
-    the size of the Jacobian matrix can get very large.
-    The Levenberg-Marquardt algorithm requires either computing and inverting J^T J or solving the normal equations for
-    Jp = r, both of which (according to "The Levenberg-Marquardt algorithm: implementation and theory" by Jorge More)
-    are numerically unstable.
-    BFGS allows us to avoid inverting the Jacobian, which is an O(n^3) operation.
+    The idea is that the learned modules can both warp the search directions to exclude certain directions,
+    updating only a few at a time.
+    Also, by running multiple estimates simultaneously from different initial guesses,
+    we can combine and resample the estimate points st each step, focusing on those that have produced
+    a low error.
     """
 
     def __init__(
@@ -27,11 +26,15 @@ class BFGSCameraSolver(nn.Module):
         max_iterations: int,
         epsilon: float,
         line_search: nn.Module,
+        search_direction_heuristic: nn.Module,
+        transform_estimates: nn.Module,
     ):
         super().__init__()
-        self.line_search = line_search
         self.max_iterations = int(max_iterations)
         self.epsilon = torch.tensor(float(epsilon))
+        self.line_search = line_search
+        self.search_direction_heuristic = search_direction_heuristic
+        self.transform_estimates = transform_estimates
 
         # Initial values of the inverse hessian
         self.inv_hessian = nn.Parameter(torch.eye(num_parameters))
@@ -41,9 +44,9 @@ class BFGSCameraSolver(nn.Module):
         function: IOptimisableFunction,
     ) -> IOptimisableFunction:
         """
-
+        Iterate
         :param function: An IOptimisableFunction, bundling multiple tensors together.
-        :return:
+        :return: An instance of the same IOptimisableFunction, with optimised parameters.
         """
         batch_size = function.batch_size
         num_estimates = function.num_estimates
@@ -52,13 +55,20 @@ class BFGSCameraSolver(nn.Module):
         inverse_hessian = self.inv_hessian.tile(batch_size, num_estimates, 1, 1)
 
         # TODO: Use updating as a mask to reduce computation
-        updating = torch.ones(batch_size, num_estimates, device=function.device)
+        updating = torch.ones(batch_size, device=function.device)
         for step in range(self.max_iterations):
             # Compute a search direction as -H \delta f
             gradient = function.get_gradient()
             search_direction = -1 * torch.matmul(inverse_hessian, gradient)
+            # Use a heuristic to adjust the search direction, to stabilise the search
+            search_direction = self.search_direction_heuristic(search_direction, step)
             # Line search for an update step that satisfies the wolfe conditions
             next_function_point, step = self.line_search(function, search_direction)
+            # Use a sub-network to resample the next points after optimisation
+            next_function_point, step = self.transform_estimates(
+                next_function_point, step
+            )
+            # Cross all the different estimates, to produce
             # Update the inverse hessian based on the next chosen point
             # This is expressed as one update equation in the BFGS algorithm,
             # but it's got too many terms for one line.
@@ -86,8 +96,11 @@ class BFGSCameraSolver(nn.Module):
             )
             inverse_hessian = inverse_hessian + delta_inv_hessian
             # Set the current evaluation point to the next one
-            function = function.masked_update(next_function_point, updating)
-            updating = torch.logical_and(
-                updating, torch.greater(function.get_error(), self.epsilon)
+            # Batch elements with an error less than the configured epsilon stop updating.
+            function = function.masked_update(
+                next_function_point, updating[:, None].tile(1, num_estimates)
             )
+            error = function.get_error()
+            error = error.min(dim=1).values
+            updating = torch.logical_and(updating, torch.greater(error, self.epsilon))
         return function
