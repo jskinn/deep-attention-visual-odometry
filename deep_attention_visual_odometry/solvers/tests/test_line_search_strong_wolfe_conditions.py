@@ -262,3 +262,57 @@ class TestLineSearchStrongWolfeConditions(unittest.TestCase):
                 )
             )
         )
+
+    def test_can_be_compiled(self):
+        target_points = torch.tensor([2.0, 1.0]).reshape(1, 1, 2)
+        initial_guess = torch.zeros_like(target_points)
+        search_direction = torch.tensor([1.0, 1.0]).reshape(1, 1, 2)
+        function_to_optimise = ExampleFunctionDistanceToPoint(
+            initial_guess, target_points
+        )
+        subject = LineSearchStrongWolfeConditions(max_step_size=10.0, zoom_iterations=5)
+        compiled_subject = torch.compile(subject)
+
+        result = compiled_subject(function_to_optimise, search_direction)
+
+        self.assertEqual(result.parameters.shape, (1, 1, 2))
+        self.assertEqual(result.parameters[0, 0, 0], 1.0)
+        self.assertEqual(result.parameters[0, 0, 1], 1.0)
+
+    def test_works_with_autograd_for_the_initial_guess(self):
+        target_points = torch.tensor([20.0, 10.0]).reshape(1, 1, 2)
+        initial_guess = torch.zeros_like(target_points, requires_grad=True)
+        search_direction = torch.tensor([1.0, 1.0]).reshape(1, 1, 2)
+        function_to_optimise = ExampleFunctionDistanceToPoint(
+            initial_guess, target_points
+        )
+        subject = LineSearchStrongWolfeConditions(max_step_size=10.0, zoom_iterations=5)
+        result = subject(function_to_optimise, search_direction)
+        result_error = result.get_error()
+        self.assertIsNone(initial_guess.grad)
+
+        result_error.sum().backward()
+
+        self.assertIsNotNone(initial_guess.grad)
+        self.assertEqual(initial_guess.grad.shape, (1, 1, 2))
+        self.assertLess(initial_guess.grad[0, 0, 0], 0.0)
+        self.assertLess(initial_guess.grad[0, 0, 1], 0.0)
+
+    def test_works_with_autograd_for_the_search_direction(self):
+        target_points = torch.tensor([20.0, 10.0]).reshape(1, 1, 2)
+        initial_guess = torch.zeros_like(target_points)
+        search_direction = torch.tensor([1.0, 1.0], requires_grad=True)
+        function_to_optimise = ExampleFunctionDistanceToPoint(
+            initial_guess, target_points
+        )
+        subject = LineSearchStrongWolfeConditions(max_step_size=10.0, zoom_iterations=5)
+        result = subject(function_to_optimise, search_direction.reshape(1, 1, 2))
+        result_error = result.get_error()
+        self.assertIsNone(search_direction.grad)
+
+        result_error.sum().backward()
+
+        self.assertIsNotNone(search_direction.grad)
+        self.assertEqual(search_direction.grad.shape, (2,))
+        self.assertLess(search_direction.grad[0], 0.0)
+        self.assertLess(search_direction.grad[1], 0.0)
