@@ -102,8 +102,8 @@ class TwoVectorOrientation:
         """
         if self._rotation_matrix is None:
             intermediates = self._get_intermediates()
-            col_1 = self._a / intermediates.a_length
-            col_2 = intermediates.b_prime / intermediates.b_prime_length
+            col_1 = self._a / intermediates.a_length.unsqueeze(-1)
+            col_2 = intermediates.b_prime / intermediates.b_prime_length.unsqueeze(-1)
             # The final column is the cross product of the first two columns
             col_3 = torch.linalg.cross(col_1, col_2, dim=-1)
             self._rotation_matrix = RotationMatrix(
@@ -115,7 +115,7 @@ class TwoVectorOrientation:
                 r6=col_3[:, :, :, 1],
                 r7=col_1[:, :, :, 2],
                 r8=col_2[:, :, :, 2],
-                r9=col_3[:, :, :, 0],
+                r9=col_3[:, :, :, 2],
             )
         return self._rotation_matrix
 
@@ -146,7 +146,7 @@ class TwoVectorOrientation:
             a_dot_b = (self._a * self._b).sum(dim=-1)
             # We subtract the component of b parallel to a, and renormalise as the second column
             project_b_onto_a = a_dot_b / a_square_length
-            b_prime = self._b - self._a * project_b_onto_a[:, None]
+            b_prime = self._b - self._a * project_b_onto_a.unsqueeze(-1)
             b_prime_squared = b_prime.square()
             b_prime_square_length = b_prime_squared.sum(dim=-1)
             b_prime_length = torch.sqrt(b_prime_square_length)

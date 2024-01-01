@@ -77,7 +77,7 @@ class BFGSCameraSolver(nn.Module):
                 step[:, :, :, None] @ delta_gradient[:, :, None, :] @ inverse_hessian
             )
             delta_inv_hessian = torch.zeros_like(inverse_hessian)
-            delta_inv_hessian[step_dot_delta_grad.squeeze(2, 3) != 0] = (
+            delta_inv_hessian[step_dot_delta_grad.squeeze(dim=(2, 3)) != 0] = (
                 step_outer_product
                 * (step_dot_delta_grad + inv_hessian_times_delta_grad)
                 / step_dot_delta_grad.square()
