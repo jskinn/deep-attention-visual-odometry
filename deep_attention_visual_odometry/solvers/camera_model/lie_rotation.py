@@ -40,22 +40,96 @@ class LieRotation:
         )
         return out_vector
 
-    def gradient(self):
+    def gradient(self, vector: torch.Tensor) -> torch.Tensor:
         """
-        Get the gradient of the current
+        Get the gradient of a rotated vector coordinates
+        with respect to the three parameters of the rotation.
         """
-        pass
+        angle_squared = (
+            self._lie_vector.square().sum(dim=-1, keepdims=True).unsqueeze(-1)
+        )
+        angle = angle_squared.sqrt()
+        gamma = torch.nan_to_num(
+            (vector * self._lie_vector).sum(dim=-1, keepdims=True).unsqueeze(-1)
+            / angle_squared
+        )
+        cos_theta = torch.cos(angle)
+        sin_theta_on_theta = torch.nan_to_num(torch.sin(angle) / angle, nan=1.0)
+        one_minus_cos_theta = 1.0 - cos_theta
+        cross_product = torch.cross(self._lie_vector, vector)
+
+        # first term (1 - cos(theta)) ((outer(v, e) - 2 \gamma outer(e, e))/theta^2 + \gamma I)
+        outer_product = vector.unsqueeze(-2) * self._lie_vector.unsqueeze(-1)
+        term_1 = (
+            outer_product
+            - 2.0
+            * self._lie_vector.unsqueeze(-2)
+            * self._lie_vector.unsqueeze(-1)
+            * gamma
+        )
+        term_1 = torch.nan_to_num(term_1 / angle_squared, nan=0.0)
+        term_1 = term_1 + gamma * torch.eye(3, device=vector.device).reshape(
+            *(1 for _ in range(gamma.ndim - 2)), 3, 3
+        )
+        term_1 = term_1 * one_minus_cos_theta
+
+        # Term 2: e ((e \gamma - v) \sin{theta}/theta + (e x v)(cos(theta) / theta^2 - sin(theta) / theta^3))
+        dot_diff = self._lie_vector * gamma.squeeze(-1) - vector
+        dot_diff = dot_diff * sin_theta_on_theta.squeeze(-1)
+        trig_diff = torch.nan_to_num(
+            cos_theta / angle_squared - sin_theta_on_theta / angle_squared,
+            nan=-1.0 / 3.0,
+        )
+        trig_diff = trig_diff.squeeze(-1) * cross_product
+        term_2 = dot_diff + trig_diff
+        term_2 = term_2.unsqueeze(-1) * self._lie_vector.unsqueeze(-2)
+
+        # Term 3: derivatives from the cross product
+        # (sin(theta) / theta) [[0, z, -y], [-z, 0, x], [y, -x, 0]]
+        x = torch.index_select(
+            vector, dim=-1, index=torch.tensor([0], device=vector.device)
+        )
+        y = torch.index_select(
+            vector, dim=-1, index=torch.tensor([1], device=vector.device)
+        )
+        z = torch.index_select(
+            vector, dim=-1, index=torch.tensor([2], device=vector.device)
+        )
+        zeros = torch.zeros_like(x)
+        term_3 = torch.stack(
+            [
+                torch.cat([zeros, z, -y], dim=-1),
+                torch.cat([-z, zeros, x], dim=-1),
+                torch.cat([y, -x, zeros], dim=-1),
+            ],
+            dim=-1,
+        )
+        term_3 = term_3 * sin_theta_on_theta
+
+        return term_1 + term_2 + term_3
 
     def add_lie_parameters(self, lie_vector) -> Self:
-        pass
+        """Add a set of parameters to the current values (such as from a gradient)"""
+        return type(self)(self._lie_vector + lie_vector)
 
     def masked_update(self, other: Self, mask: torch.Tensor) -> Self:
-        """ """
+        """
+        Using a mask, update some of the values in this from another rotation.
+        Mask should match the batch dimensions.
+        """
+        mask = mask.unsqueeze(-1).tile(
+            *(1 for _ in range(self._lie_vector.ndim - 1)), 3
+        )
         lie_vector = torch.where(mask, other._lie_vector, self._lie_vector)
         return type(self)(lie_vector)
 
     @classmethod
     def from_quaternion(cls: type[Self], quaternion: torch.Tensor) -> Self:
+        """
+        Construct a rotation object from a quaternion.
+        :param quaternion: A quaternion WXYZ in the final dimension.
+        :return: A LieRotation rotating as described by the quaternion
+        """
         scalar = torch.index_select(
             quaternion, dim=-1, index=torch.tensor([0], device=quaternion.device)
         )
