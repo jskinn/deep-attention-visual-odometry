@@ -98,9 +98,9 @@ class LieRotation:
         zeros = torch.zeros_like(x)
         term_3 = torch.stack(
             [
-                torch.cat([zeros, z, -y], dim=-1),
-                torch.cat([-z, zeros, x], dim=-1),
-                torch.cat([y, -x, zeros], dim=-1),
+                torch.cat([zeros, -z, y], dim=-1),
+                torch.cat([z, zeros, -x], dim=-1),
+                torch.cat([-y, x, zeros], dim=-1),
             ],
             dim=-1,
         )
