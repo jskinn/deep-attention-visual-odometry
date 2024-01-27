@@ -24,12 +24,15 @@ class LieRotation:
         # Produces a variant of Rodrigues' rotation formula
         angle_squared = self._lie_vector.square().sum(dim=-1, keepdims=True)
         angle = angle_squared.sqrt()
-        gamma = torch.nan_to_num(
-            (vector * self._lie_vector).sum(dim=-1, keepdims=True) / angle_squared
-        )
+        is_angle_zero = angle == 0.0
+        gamma = (vector * self._lie_vector).sum(dim=-1, keepdims=True) / angle_squared
+        gamma = torch.where(is_angle_zero, torch.zeros_like(gamma), gamma)
         cos_theta = torch.cos(angle)
         # Lim x->0 sin(x)/x = 1.0
-        sin_theta_on_theta = torch.nan_to_num(torch.sin(angle) / angle, nan=1.0)
+        sin_theta_on_theta = torch.sin(angle) / angle
+        sin_theta_on_theta = torch.where(
+            is_angle_zero, torch.ones_like(sin_theta_on_theta), sin_theta_on_theta
+        )
         # Compute the sin coefficients for each output.
         sin_coefficients = torch.cross(self._lie_vector, vector)
         gamma_axis = self._lie_vector * gamma
@@ -49,12 +52,16 @@ class LieRotation:
             self._lie_vector.square().sum(dim=-1, keepdims=True).unsqueeze(-1)
         )
         angle = angle_squared.sqrt()
-        gamma = torch.nan_to_num(
-            (vector * self._lie_vector).sum(dim=-1, keepdims=True).unsqueeze(-1)
-            / angle_squared
-        )
+        is_angle_zero = angle == 0
+        gamma = (vector * self._lie_vector).sum(dim=-1, keepdims=True).unsqueeze(
+            -1
+        ) / angle_squared
+        gamma = torch.where(is_angle_zero, torch.zeros_like(gamma), gamma)
         cos_theta = torch.cos(angle)
-        sin_theta_on_theta = torch.nan_to_num(torch.sin(angle) / angle, nan=1.0)
+        sin_theta_on_theta = torch.sin(angle) / angle
+        sin_theta_on_theta = torch.where(
+            is_angle_zero, torch.ones_like(sin_theta_on_theta), sin_theta_on_theta
+        )
         one_minus_cos_theta = 1.0 - cos_theta
         cross_product = torch.cross(self._lie_vector, vector)
 
@@ -67,7 +74,8 @@ class LieRotation:
             * self._lie_vector.unsqueeze(-1)
             * gamma
         )
-        term_1 = torch.nan_to_num(term_1 / angle_squared, nan=0.0)
+        term_1 = term_1 / angle_squared
+        term_1 = torch.where(is_angle_zero, torch.zeros_like(term_1), term_1)
         term_1 = term_1 + gamma * torch.eye(3, device=vector.device).reshape(
             *(1 for _ in range(gamma.ndim - 2)), 3, 3
         )
@@ -76,9 +84,9 @@ class LieRotation:
         # Term 2: e ((e \gamma - v) \sin{theta}/theta + (e x v)(cos(theta) / theta^2 - sin(theta) / theta^3))
         dot_diff = self._lie_vector * gamma.squeeze(-1) - vector
         dot_diff = dot_diff * sin_theta_on_theta.squeeze(-1)
-        trig_diff = torch.nan_to_num(
-            cos_theta / angle_squared - sin_theta_on_theta / angle_squared,
-            nan=-1.0 / 3.0,
+        trig_diff = cos_theta / angle_squared - sin_theta_on_theta / angle_squared
+        trig_diff = torch.where(
+            is_angle_zero, -1.0 / 3.0 * torch.ones_like(trig_diff), trig_diff
         )
         trig_diff = trig_diff.squeeze(-1) * cross_product
         term_2 = dot_diff + trig_diff
