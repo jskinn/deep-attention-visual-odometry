@@ -43,10 +43,14 @@ class LieRotation:
         )
         return out_vector
 
-    def gradient(self, vector: torch.Tensor) -> torch.Tensor:
+    def parameter_gradient(self, vector: torch.Tensor) -> torch.Tensor:
         """
         Get the gradient of a rotated vector coordinates
         with respect to the three parameters of the rotation.
+
+        :param vector: The vector being rotated, shape (Bx)3
+        :returns: A matrix of gradients for each coordinate w.r.t. each parameter.
+        Shape (Bx)3x3. The first axis is for the coordinate, second for the parameter.
         """
         angle_squared = (
             self._lie_vector.square().sum(dim=-1, keepdims=True).unsqueeze(-1)
@@ -115,6 +119,53 @@ class LieRotation:
         term_3 = term_3 * sin_theta_on_theta
 
         return term_1 + term_2 + term_3
+
+    def vector_gradient(self) -> torch.Tensor:
+        angle_squared = self._lie_vector.square().sum(dim=-1, keepdims=True)
+        angle = angle_squared.sqrt()
+        is_angle_zero = angle == 0
+        cos_theta = torch.cos(angle)
+        sin_theta_on_theta = torch.sin(angle) / angle
+        sin_theta_on_theta = torch.where(
+            is_angle_zero, torch.ones_like(sin_theta_on_theta), sin_theta_on_theta
+        )
+        one_minus_cos_theta = 1.0 - cos_theta
+        one_minus_cos_theta = one_minus_cos_theta / angle_squared
+        one_minus_cos_theta = torch.where(
+            is_angle_zero,
+            0.5 * torch.ones_like(one_minus_cos_theta),
+            one_minus_cos_theta,
+        )
+        outer_product = self._lie_vector.unsqueeze(-2) * self._lie_vector.unsqueeze(-1)
+        outer_product = outer_product * one_minus_cos_theta.unsqueeze(-1)
+
+        a = torch.index_select(
+            self._lie_vector,
+            dim=-1,
+            index=torch.tensor([0], device=self._lie_vector.device),
+        )
+        b = torch.index_select(
+            self._lie_vector,
+            dim=-1,
+            index=torch.tensor([1], device=self._lie_vector.device),
+        )
+        c = torch.index_select(
+            self._lie_vector,
+            dim=-1,
+            index=torch.tensor([2], device=self._lie_vector.device),
+        )
+        a = a * sin_theta_on_theta
+        b = b * sin_theta_on_theta
+        c = c * sin_theta_on_theta
+        cross_product_derivative = torch.stack(
+            [
+                torch.cat([cos_theta, c, -b], dim=-1),
+                torch.cat([-c, cos_theta, a], dim=-1),
+                torch.cat([b, -a, cos_theta], dim=-1),
+            ],
+            dim=-1,
+        )
+        return outer_product + cross_product_derivative
 
     def add_lie_parameters(self, lie_vector) -> Self:
         """Add a set of parameters to the current values (such as from a gradient)"""

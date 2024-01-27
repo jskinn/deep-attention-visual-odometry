@@ -162,7 +162,7 @@ def test_rotate_vector_broadcasts_correctly():
 def test_gradient_is_correct_shape():
     vector = torch.tensor([1.6, -3.7, 2.8])
     rotation = LieRotation(torch.tensor([-0.25, 0.3, 0.1]))
-    gradient = rotation.gradient(vector)
+    gradient = rotation.parameter_gradient(vector)
     assert gradient.shape == (3, 3)
 
 
@@ -170,7 +170,7 @@ def test_gradient_handles_batch_dimensions():
     vectors = torch.linspace(-10, 10, 2 * 7 * 3).reshape(2, 7, 3)
     axes = torch.linspace(-1, 1, 2 * 7 * 3).reshape(7, 3, 2).permute(2, 0, 1)
     rotation = LieRotation(axes)
-    gradient = rotation.gradient(vectors)
+    gradient = rotation.parameter_gradient(vectors)
     assert gradient.shape == (2, 7, 3, 3)
 
 
@@ -178,14 +178,14 @@ def test_gradient_broadcasts():
     vectors = torch.linspace(-10, 10, 2 * 5 * 3).reshape(2, 1, 5, 3)
     axes = torch.linspace(-1, 1, 2 * 7 * 3).reshape(1, 7, 3, 2).permute(3, 1, 0, 2)
     rotation = LieRotation(axes)
-    gradient = rotation.gradient(vectors)
+    gradient = rotation.parameter_gradient(vectors)
     assert gradient.shape == (2, 7, 5, 3, 3)
 
 
 def test_gradient_passes_through_vector_gradients():
     vector = torch.tensor([1.6, -3.7, 2.8], requires_grad=True)
     rotation = LieRotation(torch.tensor([-0.25, 0.3, 0.1]))
-    gradient = rotation.gradient(vector)
+    gradient = rotation.parameter_gradient(vector)
     assert gradient.requires_grad is True
     assert gradient.grad_fn is not None
     loss = gradient.square().sum()
@@ -198,7 +198,7 @@ def test_gradient_passes_through_axis_gradients():
     vector = torch.tensor([1.6, -3.7, 2.8])
     axis = torch.tensor([-0.25, 0.3, 0.1], requires_grad=True)
     rotation = LieRotation(axis)
-    gradient = rotation.gradient(vector)
+    gradient = rotation.parameter_gradient(vector)
     assert gradient.requires_grad is True
     assert gradient.grad_fn is not None
     loss = gradient.square().sum()
@@ -210,7 +210,7 @@ def test_gradient_passes_through_axis_gradients():
 def test_gradient_is_zero_along_diagonal_if_vector_is_zero():
     vector = torch.tensor([-4.8, -9.2, 2.2])
     rotation = LieRotation(torch.tensor([0.0, 0.0, 0.0]))
-    gradient = rotation.gradient(vector)
+    gradient = rotation.parameter_gradient(vector)
     assert gradient.shape == (3, 3)
     for i in range(3):
         for j in range(3):
@@ -223,7 +223,7 @@ def test_gradient_is_zero_along_diagonal_if_vector_is_zero():
 def test_gradient_is_zero_parallel_to_axis_when_vector_and_gradient_are_parallel():
     vector = torch.tensor([0.0, -9.2, 0.0])
     rotation = LieRotation(torch.tensor([0.0, 0.3, 0.0]))
-    gradient = rotation.gradient(vector)
+    gradient = rotation.parameter_gradient(vector)
     assert gradient.shape == (3, 3)
     assert torch.abs(gradient[0, 0]) > 0
     assert gradient[0, 1] == 0.0
@@ -290,7 +290,7 @@ def test_gradient_x_matches_equation():
     )
 
     rotation = LieRotation(angle * axis)
-    gradient = rotation.gradient(vector)
+    gradient = rotation.parameter_gradient(vector)
     assert gradient.shape == (3, 3)
     assert torch.abs(gradient[0, 0] - dx_da) < 2e-7
     assert torch.abs(gradient[0, 1] - dx_db) < 2e-7
@@ -339,7 +339,7 @@ def test_gradient_y_matches_equation():
     )
 
     rotation = LieRotation(angle * axis)
-    gradient = rotation.gradient(vector)
+    gradient = rotation.parameter_gradient(vector)
     assert gradient.shape == (3, 3)
     assert torch.abs(gradient[1, 0] - dy_da) < 2e-7
     assert torch.abs(gradient[1, 1] - dy_db) < 2e-7
@@ -388,12 +388,97 @@ def test_gradient_z_matches_equation():
     )
 
     rotation = LieRotation(angle * axis)
-    gradient = rotation.gradient(vector)
+    gradient = rotation.parameter_gradient(vector)
     assert gradient.shape == (3, 3)
 
     assert torch.abs(gradient[2, 0] - dz_da) < 2e-7
     assert torch.abs(gradient[2, 1] - dz_db) < 2e-7
     assert torch.abs(gradient[2, 2] - dz_dc) < 2e-7
+
+
+def test_vector_gradient_x_matches_equation():
+    a = -0.63
+    b = 0.81
+    c = 0.12
+    angle = math.sqrt(a * a + b * b + c * c)
+    cos_theta = math.cos(angle)
+    sin_theta = math.sin(angle)
+    dx_dx = a * a * (1.0 - cos_theta) / (angle * angle) + cos_theta
+    dx_dy = a * b * (1.0 - cos_theta) / (angle * angle) - c * sin_theta / angle
+    dx_dz = a * c * (1.0 - cos_theta) / (angle * angle) + b * sin_theta / angle
+    rotation = LieRotation(torch.tensor([a, b, c]))
+    vector_gradient = rotation.vector_gradient()
+    assert vector_gradient.shape == (3, 3)
+    assert vector_gradient[0, 0] == dx_dx
+    assert vector_gradient[0, 1] == dx_dy
+    assert vector_gradient[0, 2] == dx_dz
+
+
+def test_vector_gradient_y_matches_equation():
+    a = 0.83
+    b = -0.21
+    c = 0.22
+    angle = math.sqrt(a * a + b * b + c * c)
+    cos_theta = math.cos(angle)
+    sin_theta = math.sin(angle)
+    dy_dx = b * a * (1.0 - cos_theta) / (angle * angle) + c * sin_theta / angle
+    dy_dy = b * b * (1.0 - cos_theta) / (angle * angle) + cos_theta
+    dy_dz = b * c * (1.0 - cos_theta) / (angle * angle) - a * sin_theta / angle
+    rotation = LieRotation(torch.tensor([a, b, c]))
+    vector_gradient = rotation.vector_gradient()
+    assert vector_gradient.shape == (3, 3)
+    assert torch.abs(vector_gradient[1, 0] - dy_dx) < 1e-8
+    assert torch.abs(vector_gradient[1, 1] - dy_dy) < 1e-8
+    assert torch.abs(vector_gradient[1, 2] - dy_dz) < 1e-8
+
+
+def test_vector_gradient_z_matches_equation():
+    a = -0.141
+    b = -0.01
+    c = -0.112
+    angle = math.sqrt(a * a + b * b + c * c)
+    cos_theta = math.cos(angle)
+    sin_theta = math.sin(angle)
+    dz_dx = c * a * (1.0 - cos_theta) / (angle * angle) - b * sin_theta / angle
+    dz_dy = c * b * (1.0 - cos_theta) / (angle * angle) + a * sin_theta / angle
+    dz_dz = c * c * (1.0 - cos_theta) / (angle * angle) + cos_theta
+    rotation = LieRotation(torch.tensor([a, b, c]))
+    vector_gradient = rotation.vector_gradient()
+    assert vector_gradient.shape == (3, 3)
+    assert torch.abs(vector_gradient[2, 0] - dz_dx) < 1e-8
+    assert torch.abs(vector_gradient[2, 1] - dz_dy) < 1e-8
+    assert torch.abs(vector_gradient[2, 2] - dz_dz) < 1e-8
+
+
+def test_vector_gradient_is_identity_at_zero():
+    rotation = LieRotation(torch.zeros(3))
+    vector_gradient = rotation.vector_gradient()
+    assert torch.equal(vector_gradient, torch.eye(3))
+
+
+def test_vector_gradient_handles_batch_dimensions(random_generator):
+    axis_angle = torch.randn(2, 5, 3, generator=random_generator)
+    rotation = LieRotation(axis_angle)
+    vector_gradient = rotation.vector_gradient()
+    assert vector_gradient.shape == (2, 5, 3, 3)
+
+
+def test_from_quaternion_handles_batch_dimensions(random_generator):
+    quaternions = torch.randn(5, 2, 1, 4, generator=random_generator)
+    quaternions = quaternions / torch.linalg.norm(quaternions, dim=-1, keepdim=True)
+    vectors = 3 * torch.randn(5, 1, 7, 3, generator=random_generator)
+    rotations = LieRotation.from_quaternion(quaternions)
+    result = rotations.rotate_vector(vectors)
+    assert result.shape == (5, 2, 7, 3)
+    assert torch.all(
+        torch.less(
+            torch.abs(
+                torch.linalg.norm(vectors, dim=-1).tile(1, 2, 1)
+                - torch.linalg.norm(result, dim=-1)
+            ),
+            2e-6,
+        )
+    )
 
 
 def test_sgd_is_stable_when_correct(random_generator):
@@ -411,7 +496,7 @@ def test_sgd_is_stable_when_correct(random_generator):
     true_rotated_vector = true_rotation.rotate_vector(vector)
     for step_num in range(steps):
         estimated_rotated_vector = estimate.rotate_vector(vector)
-        gradient = estimate.gradient(vector)
+        gradient = estimate.parameter_gradient(vector)
         diff = estimated_rotated_vector - true_rotated_vector
         step = -2.0 * (diff.unsqueeze(-1) * gradient).sum(dim=0)
         estimate = estimate.add_lie_parameters(learning_rate * step)
@@ -437,7 +522,7 @@ def test_converges_under_sgd_for_small_changes(delta: torch.Tensor, random_gener
     true_rotated_vector = true_rotation.rotate_vector(vector)
     for step_num in range(steps):
         estimated_rotated_vector = estimate.rotate_vector(vector)
-        gradient = estimate.gradient(vector)
+        gradient = estimate.parameter_gradient(vector)
         diff = estimated_rotated_vector - true_rotated_vector
         step = -2.0 * (diff.unsqueeze(-1) * gradient).sum(dim=0)
         estimate = estimate.add_lie_parameters(learning_rate * step)
@@ -459,7 +544,7 @@ def test_converges_under_sgd_near_zero(delta: torch.Tensor):
     step = torch.zeros(3)
     for step_num in range(steps):
         estimated_rotated_vector = estimate.rotate_vector(vector)
-        gradient = estimate.gradient(vector)
+        gradient = estimate.parameter_gradient(vector)
         diff = estimated_rotated_vector - true_rotated_vector
         step = beta * step + 2.0 * (1.0 - beta) * (diff.unsqueeze(-1) * gradient).sum(
             dim=0
@@ -484,9 +569,11 @@ def test_converges_under_sgd_near_2pi(delta: torch.Tensor):
     step = torch.zeros(3)
     for step_num in range(steps):
         estimated_rotated_vector = estimate.rotate_vector(vector)
-        gradient = estimate.gradient(vector)
+        gradient = estimate.parameter_gradient(vector)
         diff = estimated_rotated_vector - true_rotated_vector
-        step = step * beta + (1.0 - beta) * 2.0 * (diff.unsqueeze(-1) * gradient).sum(dim=0)
+        step = step * beta + (1.0 - beta) * 2.0 * (diff.unsqueeze(-1) * gradient).sum(
+            dim=0
+        )
         estimate = estimate.add_lie_parameters(-learning_rate * step)
 
     estimated_rotated_vector = estimate.rotate_vector(vector)
@@ -494,17 +581,46 @@ def test_converges_under_sgd_near_2pi(delta: torch.Tensor):
     assert diff.abs().max() < 1e-4
 
 
+def test_vector_converges_under_sgd_for_small_changes(
+    delta: torch.Tensor, random_generator
+):
+    # do a fixed number of gradient descent steps
+    learning_rate = 5e-2
+    steps = 100
+    vector = 5 * torch.randn(3, generator=random_generator)
+    angle = (math.pi / 16) + (14 * math.pi / 16) * torch.rand(
+        1, generator=random_generator
+    )
+    axis = torch.randn(3, generator=random_generator)
+    axis_angle = angle * axis / torch.linalg.norm(axis)
+    rotation = LieRotation(axis_angle)
+    gradient = rotation.vector_gradient()
+    estimate = vector + delta
+    true_rotated_vector = rotation.rotate_vector(vector)
+    for step_num in range(steps):
+        estimated_rotated_vector = rotation.rotate_vector(estimate)
+        diff = estimated_rotated_vector - true_rotated_vector
+        step = -2.0 * learning_rate * (diff.unsqueeze(-1) * gradient).sum(dim=0)
+        estimate = estimate + step
+
+    estimated_rotated_vector = rotation.rotate_vector(estimate)
+    diff = estimated_rotated_vector - true_rotated_vector
+    assert diff.abs().max() < 1e-5
+
+
 class RotationModule(nn.Module):
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         rotation = LieRotation(torch.tensor([-0.25, 0.3, 0.1]))
         rotated_vector = rotation.rotate_vector(x)
-        gradient = rotation.gradient(x)
-        return rotated_vector, gradient
+        gradient = rotation.parameter_gradient(x)
+        vector_gradient = rotation.vector_gradient()
+        return rotated_vector, gradient, vector_gradient
 
 
 def test_can_be_compiled():
     vector = torch.tensor([1.6, -3.7, 2.8])
     rotation_comp = torch.compile(RotationModule())
-    rotated_vector, gradient = rotation_comp(vector)
+    rotated_vector, gradient, vector_gradient = rotation_comp(vector)
     assert rotated_vector.shape == (3,)
     assert gradient.shape == (3, 3)
+    assert vector_gradient.shape == (3, 3)
