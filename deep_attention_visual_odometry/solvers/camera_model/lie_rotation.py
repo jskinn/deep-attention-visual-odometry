@@ -34,7 +34,7 @@ class LieRotation:
             is_angle_zero, torch.ones_like(sin_theta_on_theta), sin_theta_on_theta
         )
         # Compute the sin coefficients for each output.
-        sin_coefficients = torch.cross(self._lie_vector, vector)
+        sin_coefficients = torch.linalg.cross(self._lie_vector, vector, dim=-1)
         gamma_axis = self._lie_vector * gamma
         out_vector = (
             vector * cos_theta
@@ -67,7 +67,7 @@ class LieRotation:
             is_angle_zero, torch.ones_like(sin_theta_on_theta), sin_theta_on_theta
         )
         one_minus_cos_theta = 1.0 - cos_theta
-        cross_product = torch.cross(self._lie_vector, vector)
+        cross_product = torch.linalg.cross(self._lie_vector, vector, dim=-1)
 
         # first term (1 - cos(theta)) ((outer(v, e) - 2 \gamma outer(e, e))/theta^2 + \gamma I)
         outer_product = vector.unsqueeze(-2) * self._lie_vector.unsqueeze(-1)
@@ -167,6 +167,10 @@ class LieRotation:
         )
         return outer_product + cross_product_derivative
 
+    def slice(self, mask: torch.Tensor) -> Self:
+        """Slice the batch dimensions (if any), returning a rotation for some of the values."""
+        return type(self)(self._lie_vector[mask])
+
     def add_lie_parameters(self, lie_vector) -> Self:
         """Add a set of parameters to the current values (such as from a gradient)"""
         return type(self)(self._lie_vector + lie_vector)
@@ -176,9 +180,9 @@ class LieRotation:
         Using a mask, update some of the values in this from another rotation.
         Mask should match the batch dimensions.
         """
-        mask = mask.unsqueeze(-1).tile(
-            *(1 for _ in range(self._lie_vector.ndim - 1)), 3
-        )
+        # mask = mask.unsqueeze(-1).tile(
+        #     *(1 for _ in range(self._lie_vector.ndim - 1)), 3
+        # )
         lie_vector = torch.where(mask, other._lie_vector, self._lie_vector)
         return type(self)(lie_vector)
 

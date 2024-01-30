@@ -182,31 +182,6 @@ def test_gradient_broadcasts():
     assert gradient.shape == (2, 7, 5, 3, 3)
 
 
-def test_gradient_passes_through_vector_gradients():
-    vector = torch.tensor([1.6, -3.7, 2.8], requires_grad=True)
-    rotation = LieRotation(torch.tensor([-0.25, 0.3, 0.1]))
-    gradient = rotation.parameter_gradient(vector)
-    assert gradient.requires_grad is True
-    assert gradient.grad_fn is not None
-    loss = gradient.square().sum()
-    loss.backward()
-    assert vector.grad is not None
-    assert torch.all(torch.greater(torch.abs(vector.grad), 0))
-
-
-def test_gradient_passes_through_axis_gradients():
-    vector = torch.tensor([1.6, -3.7, 2.8])
-    axis = torch.tensor([-0.25, 0.3, 0.1], requires_grad=True)
-    rotation = LieRotation(axis)
-    gradient = rotation.parameter_gradient(vector)
-    assert gradient.requires_grad is True
-    assert gradient.grad_fn is not None
-    loss = gradient.square().sum()
-    loss.backward()
-    assert axis.grad is not None
-    assert torch.all(torch.greater(torch.abs(axis.grad), 0))
-
-
 def test_gradient_is_zero_along_diagonal_if_vector_is_zero():
     vector = torch.tensor([-4.8, -9.2, 2.2])
     rotation = LieRotation(torch.tensor([0.0, 0.0, 0.0]))
@@ -479,6 +454,31 @@ def test_from_quaternion_handles_batch_dimensions(random_generator):
             2e-6,
         )
     )
+
+
+def test_tensor_gradient_passes_through_vector_gradients():
+    vector = torch.tensor([1.6, -3.7, 2.8], requires_grad=True)
+    rotation = LieRotation(torch.tensor([-0.25, 0.3, 0.1]))
+    gradient = rotation.parameter_gradient(vector)
+    assert gradient.requires_grad is True
+    assert gradient.grad_fn is not None
+    loss = gradient.square().sum()
+    loss.backward()
+    assert vector.grad is not None
+    assert torch.all(torch.greater(torch.abs(vector.grad), 0))
+
+
+def test_tensor_gradient_passes_through_axis_gradients():
+    vector = torch.tensor([1.6, -3.7, 2.8])
+    axis = torch.tensor([-0.25, 0.3, 0.1], requires_grad=True)
+    rotation = LieRotation(axis)
+    gradient = rotation.parameter_gradient(vector)
+    assert gradient.requires_grad is True
+    assert gradient.grad_fn is not None
+    loss = gradient.square().sum()
+    loss.backward()
+    assert axis.grad is not None
+    assert torch.all(torch.greater(torch.abs(axis.grad), 0))
 
 
 def test_sgd_is_stable_when_correct(random_generator):

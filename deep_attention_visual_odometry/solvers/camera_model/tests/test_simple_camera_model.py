@@ -2,6 +2,7 @@ import math
 import pytest
 import torch
 from deep_attention_visual_odometry.solvers.camera_model import SimpleCameraModel
+from deep_attention_visual_odometry.solvers.camera_model.lie_rotation import LieRotation
 
 
 @pytest.fixture()
@@ -11,11 +12,14 @@ def models_and_mask() -> (
     focal_length = torch.tensor([340, 600])
     cx = torch.tensor([320, 420])
     cy = torch.tensor([240, 300])
-    right = torch.tensor([1.0, 0.0, 0.0])
-    down = torch.tensor([0.0, 1.0, 0.0])
+    angle = math.pi / 180
+    axis = torch.tensor(
+        [[0.01, 0.01, math.sqrt(1.0 - 2e-4)], [0.01, math.sqrt(1.0 - 3e-4), 0.02]]
+    )
     translation = torch.tensor([[-0.1, 0.3, 3.0], [0.2, -0.2, 7.0]])
+    orientation = LieRotation((axis * angle))
     point = torch.tensor([[0.2, -0.2, 0.1], [-0.1, -0.1, -0.6]])
-    camera_relative_point = point + translation
+    camera_relative_point = orientation.rotate_vector(point) + translation
     expected_u = (
         focal_length * camera_relative_point[:, 0] / camera_relative_point[:, 2] + cx
     )
@@ -26,9 +30,10 @@ def models_and_mask() -> (
         focal_length=torch.tensor([[focal_length[0]], [focal_length[0]]]),
         cx=torch.tensor([[cx[0]], [cx[0]]]),
         cy=torch.tensor([[cy[0]], [cy[0]]]),
-        a=right.reshape(1, 1, 1, 3).tile(2, 1, 1, 1),
-        b=down.reshape(1, 1, 1, 3).tile(2, 1, 1, 1),
         translation=translation[0, :].reshape(1, 1, 1, 3).tile(2, 1, 1, 1),
+        orientation=LieRotation(
+            (axis[0, :] * angle).reshape(1, 1, 1, 1, 3).tile(2, 1, 1, 1, 1)
+        ),
         world_points=point[0, :].reshape(1, 1, 1, 3).tile(2, 1, 1, 1),
         true_projected_points=torch.tensor(
             [
@@ -41,9 +46,10 @@ def models_and_mask() -> (
         focal_length=torch.tensor([[focal_length[1]], [focal_length[1]]]),
         cx=torch.tensor([[cx[1]], [cx[1]]]),
         cy=torch.tensor([[cy[1]], [cy[1]]]),
-        a=right.reshape(1, 1, 1, 3).tile(2, 1, 1, 1),
-        b=down.reshape(1, 1, 1, 3).tile(2, 1, 1, 1),
         translation=translation[1, :].reshape(1, 1, 1, 3).tile(2, 1, 1, 1),
+        orientation=LieRotation(
+            (axis[1, :] * angle).reshape(1, 1, 1, 1, 3).tile(2, 1, 1, 1, 1)
+        ),
         world_points=point[1, :].reshape(1, 1, 1, 3).tile(2, 1, 1, 1),
         true_projected_points=torch.tensor(
             [
@@ -57,9 +63,8 @@ def models_and_mask() -> (
         focal_length=torch.tensor([[focal_length[0]], [focal_length[1]]]),
         cx=torch.tensor([[cx[0]], [cx[1]]]),
         cy=torch.tensor([[cy[0]], [cy[1]]]),
-        a=right.reshape(1, 1, 1, 3).tile(2, 1, 1, 1),
-        b=down.reshape(1, 1, 1, 3).tile(2, 1, 1, 1),
         translation=translation.reshape(2, 1, 1, 3),
+        orientation=LieRotation((axis * angle).reshape(2, 1, 1, 1, 3)),
         world_points=point.reshape(2, 1, 1, 3),
         true_projected_points=torch.tensor(
             [
@@ -80,15 +85,10 @@ def test_num_parameters_scales_with_num_views_and_num_points():
         focal_length=340 * torch.ones(batch_size, num_estimates),
         cx=320 * torch.ones(batch_size, num_estimates),
         cy=240 * torch.ones(batch_size, num_estimates),
-        a=torch.tensor([1.0, 0.0, 0.0])
-        .reshape(1, 1, 1, 3)
-        .tile(batch_size, num_estimates, num_views, 1),
-        b=torch.tensor([0.0, 1.0, 0.0])
-        .reshape(1, 1, 1, 3)
-        .tile(batch_size, num_estimates, num_views, 1),
         translation=torch.tensor([-1.0, 2.0, -0.3])
         .reshape(1, 1, 1, 3)
         .tile(batch_size, num_estimates, num_views, 1),
+        orientation=LieRotation(torch.zeros(batch_size, num_estimates, num_views, 3)),
         world_points=torch.tensor(
             list(range(batch_size * num_estimates * num_points * 3))
         ).reshape(batch_size, num_estimates, num_points, 3),
@@ -96,7 +96,7 @@ def test_num_parameters_scales_with_num_views_and_num_points():
             list(range(batch_size * num_estimates * num_views * num_points * 2))
         ).reshape(batch_size, num_estimates, num_views, num_points, 2),
     )
-    assert camera_model.num_parameters == 3 + 9 * num_views + 3 * num_points
+    assert camera_model.num_parameters == 3 + 6 * num_views + 3 * num_points
 
 
 def test_get_error_return_shape():
@@ -108,18 +108,17 @@ def test_get_error_return_shape():
         focal_length=340 * torch.ones(batch_size, num_estimates),
         cx=320 * torch.ones(batch_size, num_estimates),
         cy=240 * torch.ones(batch_size, num_estimates),
-        a=torch.tensor([1.0, 0.0, 0.0])
-        .reshape(1, 1, 1, 3)
-        .tile(batch_size, num_estimates, num_views, 1),
-        b=torch.tensor([0.0, 1.0, 0.0])
-        .reshape(1, 1, 1, 3)
-        .tile(batch_size, num_estimates, num_views, 1),
         translation=torch.tensor([-1.0, 2.0, -0.3])
         .reshape(1, 1, 1, 3)
         .tile(batch_size, num_estimates, num_views, 1),
+        orientation=LieRotation(
+            torch.zeros(batch_size, num_estimates, num_views, 1, 3)
+        ),
         world_points=torch.tensor(
             list(range(batch_size * num_estimates * num_points * 3))
-        ).reshape(batch_size, num_estimates, num_points, 3),
+        )
+        .reshape(batch_size, num_estimates, num_points, 3)
+        .to(torch.float),
         true_projected_points=torch.tensor(
             list(range(batch_size * num_estimates * num_views * num_points * 2))
         ).reshape(batch_size, num_estimates, num_views, num_points, 2),
@@ -132,11 +131,13 @@ def test_get_error_returns_square_error_between_estimated_and_true_projected_poi
     focal_length = 340
     cx = 320
     cy = 240
-    right = torch.tensor([1.0, 0.0, 0.0])
-    down = torch.tensor([0.0, 1.0, 0.0])
     translation = torch.tensor([-0.1, 0.3, 3.0])
+    axis = torch.tensor([0.5, -0.3, 0.5])
+    axis = axis / torch.linalg.norm(axis)
+    angle = math.pi / 16
+    orientation = LieRotation(axis * angle)
     point = torch.tensor([0.2, -0.2, 0.1])
-    camera_relative_point = point + translation
+    camera_relative_point = orientation.rotate_vector(point) + translation
     expected_u = focal_length * camera_relative_point[0] / camera_relative_point[2] + cx
     expected_v = focal_length * camera_relative_point[1] / camera_relative_point[2] + cy
     expected_error_u = 10.0
@@ -145,9 +146,8 @@ def test_get_error_returns_square_error_between_estimated_and_true_projected_poi
         focal_length=torch.tensor([[focal_length]]),
         cx=torch.tensor([[cx]]),
         cy=torch.tensor([[cy]]),
-        a=right.reshape(1, 1, 1, 3),
-        b=down.reshape(1, 1, 1, 3),
         translation=translation.reshape(1, 1, 1, 3),
+        orientation=LieRotation(angle * axis.reshape(1, 1, 1, 1, 3)),
         world_points=point.reshape(1, 1, 1, 3),
         true_projected_points=torch.tensor(
             [expected_u + expected_error_u, expected_v + expected_error_v]
@@ -155,9 +155,11 @@ def test_get_error_returns_square_error_between_estimated_and_true_projected_poi
     )
     error = camera_model.get_error()
     assert error.shape == (1, 1)
-    assert (
-        error[0, 0]
-        == expected_error_u * expected_error_u + expected_error_v * expected_error_v
+    assert torch.isclose(
+        error[0, 0],
+        torch.tensor(
+            expected_error_u * expected_error_u + expected_error_v * expected_error_v
+        ),
     )
 
 
@@ -166,8 +168,6 @@ def test_camera_projection_clips_negative_z_to_minimum_distance():
     focal_length = 340
     cx = 320
     cy = 240
-    right = torch.tensor([1.0, 0.0, 0.0])
-    down = torch.tensor([0.0, 1.0, 0.0])
     translation = torch.tensor([-0.1, 0.3, -3.0])
     point = torch.tensor([0.2, -0.2, 0.1])
     camera_relative_point = point + translation
@@ -179,9 +179,8 @@ def test_camera_projection_clips_negative_z_to_minimum_distance():
         focal_length=torch.tensor([[focal_length]]),
         cx=torch.tensor([[cx]]),
         cy=torch.tensor([[cy]]),
-        a=right.reshape(1, 1, 1, 3),
-        b=down.reshape(1, 1, 1, 3),
         translation=translation.reshape(1, 1, 1, 3),
+        orientation=LieRotation(torch.zeros(1, 1, 1, 1, 3)),
         world_points=point.reshape(1, 1, 1, 3),
         true_projected_points=torch.tensor(
             [expected_u + expected_error_u, expected_v + expected_error_v]
@@ -190,9 +189,11 @@ def test_camera_projection_clips_negative_z_to_minimum_distance():
     )
     error = camera_model.get_error()
     assert error.shape == (1, 1)
-    assert (
-        error[0, 0]
-        == expected_error_u * expected_error_u + expected_error_v * expected_error_v
+    assert torch.isclose(
+        error[0, 0],
+        torch.tensor(
+            expected_error_u * expected_error_u + expected_error_v * expected_error_v
+        ),
     )
 
 
@@ -205,18 +206,19 @@ def test_get_error_caches_returned_tensor():
         focal_length=340 * torch.ones(batch_size, num_estimates),
         cx=320 * torch.ones(batch_size, num_estimates),
         cy=240 * torch.ones(batch_size, num_estimates),
-        a=torch.tensor([1.0, 0.0, 0.0])
-        .reshape(1, 1, 1, 3)
-        .tile(batch_size, num_estimates, num_views, 1),
-        b=torch.tensor([0.0, 1.0, 0.0])
-        .reshape(1, 1, 1, 3)
-        .tile(batch_size, num_estimates, num_views, 1),
         translation=torch.tensor([-1.0, 2.0, -0.3])
         .reshape(1, 1, 1, 3)
         .tile(batch_size, num_estimates, num_views, 1),
+        orientation=LieRotation(
+            torch.tensor([0.01, -0.02, 0.1])
+            .reshape(1, 1, 1, 1, 3)
+            .tile(batch_size, num_estimates, num_views, 1, 1)
+        ),
         world_points=torch.tensor(
             list(range(batch_size * num_estimates * num_points * 3))
-        ).reshape(batch_size, num_estimates, num_points, 3),
+        )
+        .reshape(batch_size, num_estimates, num_points, 3)
+        .to(torch.float),
         true_projected_points=torch.tensor(
             list(range(batch_size * num_estimates * num_views * num_points * 2))
         ).reshape(batch_size, num_estimates, num_views, num_points, 2),
@@ -301,18 +303,19 @@ def test_get_gradient_return_shape():
         focal_length=340 * torch.ones(batch_size, num_estimates),
         cx=320 * torch.ones(batch_size, num_estimates),
         cy=240 * torch.ones(batch_size, num_estimates),
-        a=torch.tensor([1.0, 0.0, 0.0])
-        .reshape(1, 1, 1, 3)
-        .tile(batch_size, num_estimates, num_views, 1),
-        b=torch.tensor([0.0, 1.0, 0.0])
-        .reshape(1, 1, 1, 3)
-        .tile(batch_size, num_estimates, num_views, 1),
         translation=torch.tensor([-1.0, 2.0, -0.3])
         .reshape(1, 1, 1, 3)
         .tile(batch_size, num_estimates, num_views, 1),
+        orientation=LieRotation(
+            torch.tensor([0.2, -0.02, -0.004])
+            .reshape(1, 1, 1, 1, 3)
+            .tile(batch_size, num_estimates, num_views, 1, 1)
+        ),
         world_points=torch.tensor(
             list(range(batch_size * num_estimates * num_points * 3))
-        ).reshape(batch_size, num_estimates, num_points, 3),
+        )
+        .reshape(batch_size, num_estimates, num_points, 3)
+        .to(torch.float),
         true_projected_points=torch.tensor(
             list(range(batch_size * num_estimates * num_views * num_points * 2))
         ).reshape(batch_size, num_estimates, num_views, num_points, 2),
@@ -325,27 +328,28 @@ def test_gradient_is_zero_for_correct_estimate():
     focal_length = 340
     cx = 320
     cy = 240
-    right = torch.tensor([1.0, 0.0, 0.0])
-    down = torch.tensor([0.0, 1.0, 0.0])
+    axis = torch.tensor([0.5, -0.3, 0.5])
+    axis = axis / torch.linalg.norm(axis)
+    angle = math.pi / 16
     translation = torch.tensor([-0.1, 0.3, 3.0])
+    orientation = LieRotation(angle * axis)
     point = torch.tensor([0.2, -0.2, 0.1])
-    camera_relative_point = point + translation
+    camera_relative_point = orientation.rotate_vector(point) + translation
     expected_u = focal_length * camera_relative_point[0] / camera_relative_point[2] + cx
     expected_v = focal_length * camera_relative_point[1] / camera_relative_point[2] + cy
     camera_model = SimpleCameraModel(
         focal_length=torch.tensor([[focal_length]]),
         cx=torch.tensor([[cx]]),
         cy=torch.tensor([[cy]]),
-        a=right.reshape(1, 1, 1, 3),
-        b=down.reshape(1, 1, 1, 3),
         translation=translation.reshape(1, 1, 1, 3),
+        orientation=LieRotation(angle * axis.reshape(1, 1, 1, 1, 3)),
         world_points=point.reshape(1, 1, 1, 3),
         true_projected_points=torch.tensor([expected_u, expected_v]).reshape(
             1, 1, 1, 1, 2
         ),
     )
     gradient = camera_model.get_gradient()
-    assert gradient.shape == (1, 1, 15)
+    assert gradient.shape == (1, 1, 12)
     assert torch.all(gradient.abs() < 1e-8)
 
 
@@ -356,8 +360,9 @@ def test_cx_gradient_is_high_if_incorrect():
     cx = 320
     true_cx = 300
     cy = 240
-    right = torch.tensor([[1.0, 0.0, 0.0]]).tile((num_views, 1))
-    down = torch.tensor([[0.0, 1.0, 0.0]]).tile((num_views, 1))
+    axis = torch.tensor([[0.0, 0.0, 1.0]])
+    angles = torch.tensor([[math.pi / 36], [0.0], [-math.pi / 36]])
+    orientations = LieRotation((angles * axis).reshape(3, 1, 3))
     translations = torch.tensor(
         [
             [-0.1, 0.3, 8.0],
@@ -374,7 +379,9 @@ def test_cx_gradient_is_high_if_incorrect():
             [-0.2, -0.2, 0.1],
         ]
     )
-    camera_relative_points = points[None, :, :] + translations[:, None, :]
+    camera_relative_points = (
+        orientations.rotate_vector(points[None, :, :]) + translations[:, None, :]
+    )
     expected_u = (
         focal_length * camera_relative_points[:, :, 0] / camera_relative_points[:, :, 2]
         + true_cx
@@ -387,16 +394,15 @@ def test_cx_gradient_is_high_if_incorrect():
         focal_length=torch.tensor([[focal_length]]),
         cx=torch.tensor([[cx]]),
         cy=torch.tensor([[cy]]),
-        a=right.reshape(1, 1, num_views, 3),
-        b=down.reshape(1, 1, num_views, 3),
         translation=translations.reshape(1, 1, num_views, 3),
+        orientation=LieRotation((angles * axis).reshape(1, 1, num_views, 1, 3)),
         world_points=points.reshape(1, 1, num_points, 3),
         true_projected_points=torch.cat(
             [expected_u[:, :, None], expected_v[:, :, None]], dim=2
         ).reshape(1, 1, num_views, num_points, 2),
     )
     gradient = camera_model.get_gradient()
-    assert gradient.shape == (1, 1, 3 + 9 * num_views + 3 * num_points)
+    assert gradient.shape == (1, 1, 3 + 6 * num_views + 3 * num_points)
     assert gradient[0, 0, 0] > 1.0
 
 
@@ -407,8 +413,9 @@ def test_cy_gradient_is_high_if_incorrect():
     cx = 320
     cy = 240
     true_cy = 260
-    right = torch.tensor([[1.0, 0.0, 0.0]]).tile((num_views, 1))
-    down = torch.tensor([[0.0, 1.0, 0.0]]).tile((num_views, 1))
+    axis = torch.tensor([[0.0, 0.0, 1.0]])
+    angles = torch.tensor([[math.pi / 36], [0.0], [-math.pi / 36]])
+    orientations = LieRotation((angles * axis).reshape(3, 1, 3))
     translations = torch.tensor(
         [
             [-0.1, 0.3, 8.0],
@@ -425,7 +432,9 @@ def test_cy_gradient_is_high_if_incorrect():
             [-0.2, -0.2, 0.1],
         ]
     )
-    camera_relative_points = points[None, :, :] + translations[:, None, :]
+    camera_relative_points = (
+        orientations.rotate_vector(points[None, :, :]) + translations[:, None, :]
+    )
     expected_u = (
         focal_length * camera_relative_points[:, :, 0] / camera_relative_points[:, :, 2]
         + cx
@@ -438,16 +447,15 @@ def test_cy_gradient_is_high_if_incorrect():
         focal_length=torch.tensor([[focal_length]]),
         cx=torch.tensor([[cx]]),
         cy=torch.tensor([[cy]]),
-        a=right.reshape(1, 1, num_views, 3),
-        b=down.reshape(1, 1, num_views, 3),
         translation=translations.reshape(1, 1, num_views, 3),
+        orientation=LieRotation((angles * axis).reshape(1, 1, num_views, 1, 3)),
         world_points=points.reshape(1, 1, num_points, 3),
         true_projected_points=torch.cat(
             [expected_u[:, :, None], expected_v[:, :, None]], dim=2
         ).reshape(1, 1, num_views, num_points, 2),
     )
     gradient = camera_model.get_gradient()
-    assert gradient.shape == (1, 1, 3 + 9 * num_views + 3 * num_points)
+    assert gradient.shape == (1, 1, 3 + 6 * num_views + 3 * num_points)
     assert gradient[0, 0, 1] < -1.0
 
 
@@ -458,8 +466,9 @@ def test_fx_gradient_is_high_if_incorrect():
     true_focal_length = 400
     cx = 320
     cy = 240
-    right = torch.tensor([[1.0, 0.0, 0.0]]).tile((num_views, 1))
-    down = torch.tensor([[0.0, 1.0, 0.0]]).tile((num_views, 1))
+    axis = torch.tensor([[0.0, 0.0, 1.0]])
+    angles = torch.tensor([[math.pi / 36], [0.0], [-math.pi / 36]])
+    orientations = LieRotation((angles * axis).reshape(3, 1, 3))
     translations = torch.tensor(
         [
             [-0.1, 0.3, 8.0],
@@ -476,7 +485,9 @@ def test_fx_gradient_is_high_if_incorrect():
             [-0.2, -0.2, 0.1],
         ]
     )
-    camera_relative_points = points[None, :, :] + translations[:, None, :]
+    camera_relative_points = (
+        orientations.rotate_vector(points[None, :, :]) + translations[:, None, :]
+    )
     expected_u = (
         true_focal_length
         * camera_relative_points[:, :, 0]
@@ -493,29 +504,39 @@ def test_fx_gradient_is_high_if_incorrect():
         focal_length=torch.tensor([[focal_length]]),
         cx=torch.tensor([[cx]]),
         cy=torch.tensor([[cy]]),
-        a=right.reshape(1, 1, num_views, 3),
-        b=down.reshape(1, 1, num_views, 3),
         translation=translations.reshape(1, 1, num_views, 3),
+        orientation=LieRotation((angles * axis).reshape(1, 1, num_views, 1, 3)),
         world_points=points.reshape(1, 1, num_points, 3),
         true_projected_points=torch.cat(
             [expected_u[:, :, None], expected_v[:, :, None]], dim=2
         ).reshape(1, 1, num_views, num_points, 2),
     )
     gradient = camera_model.get_gradient()
-    assert gradient.shape == (1, 1, 3 + 9 * num_views + 3 * num_points)
+    assert gradient.shape == (1, 1, 3 + 6 * num_views + 3 * num_points)
     assert gradient[0, 0, 2] < -1.0
 
 
-def test_a1_gradient_is_high_if_incorrect():
+def test_orientation_x_gradient_is_high_if_incorrect():
     num_points = 5
     num_views = 3
     focal_length = 340
     cx = 320
     cy = 240
-    right = torch.tensor(
-        [[math.cos(math.pi / 12), math.sin(math.pi / 12), 0.0], [1.0, 0.0, 0.0]]
+    true_orientations = torch.tensor(
+        [
+            [-0.1, 0.0, 0.0],
+            [0.01, 0.0, 0.0],
+            [0.2, 0.0, 0.0],
+        ]
     )
-    down = torch.tensor([[0.0, 1.0, 0.0]]).tile((num_views, 1))
+    estimated_orientations = torch.tensor(
+        [
+            [-0.15, 0.0, 0.0],
+            [0.1, 0.0, 0.0],
+            [0.1, 0.0, 0.0],
+        ]
+    )
+    orientations = LieRotation(true_orientations.reshape(3, 1, 3))
     translations = torch.tensor(
         [
             [-0.1, 0.3, 8.0],
@@ -532,7 +553,9 @@ def test_a1_gradient_is_high_if_incorrect():
             [-0.2, -0.2, 0.1],
         ]
     )
-    camera_relative_points = points[None, :, :] + translations[:, None, :]
+    camera_relative_points = (
+        orientations.rotate_vector(points[None, :, :]) + translations[:, None, :]
+    )
     expected_u = (
         focal_length * camera_relative_points[:, :, 0] / camera_relative_points[:, :, 2]
         + cx
@@ -545,14 +568,13 @@ def test_a1_gradient_is_high_if_incorrect():
         focal_length=torch.tensor([[focal_length]]),
         cx=torch.tensor([[cx]]),
         cy=torch.tensor([[cy]]),
-        a=right.reshape(1, 1, num_views, 3),
-        b=down.reshape(1, 1, num_views, 3),
         translation=translations.reshape(1, 1, num_views, 3),
+        orientation=LieRotation(estimated_orientations.reshape(1, 1, num_views, 1, 3)),
         world_points=points.reshape(1, 1, num_points, 3),
         true_projected_points=torch.cat(
             [expected_u[:, :, None], expected_v[:, :, None]], dim=2
         ).reshape(1, 1, num_views, num_points, 2),
     )
     gradient = camera_model.get_gradient()
-    assert gradient.shape == (1, 1, 3 + 9 * num_views + 3 * num_points)
+    assert gradient.shape == (1, 1, 3 + 6 * num_views + 3 * num_points)
     assert gradient[0, 0, 3] < -1.0

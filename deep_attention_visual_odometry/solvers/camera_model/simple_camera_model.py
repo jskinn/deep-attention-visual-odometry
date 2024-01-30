@@ -3,11 +3,7 @@ import torch
 
 from deep_attention_visual_odometry.solvers import IOptimisableFunction
 from deep_attention_visual_odometry.utils import masked_merge_tensors
-from .vectors_to_rotation_matrix import (
-    TwoVectorOrientation,
-    RotationMatrix,
-    RotationMatrixDerivatives,
-)
+from .lie_rotation import LieRotation
 
 
 class SimpleCameraModel(IOptimisableFunction):
@@ -38,9 +34,8 @@ class SimpleCameraModel(IOptimisableFunction):
         focal_length: torch.Tensor,
         cx: torch.Tensor,
         cy: torch.Tensor,
-        a: torch.Tensor,
-        b: torch.Tensor,
         translation: torch.Tensor,
+        orientation: LieRotation,
         world_points: torch.Tensor,
         true_projected_points: torch.Tensor,
         minimum_distance: float = 1e-5,
@@ -53,9 +48,8 @@ class SimpleCameraModel(IOptimisableFunction):
         :param focal_length: BxE (assumed fixed for all views)
         :param cx: BxE (fixed for all views)
         :param cy: BxE (fixed for all views)
-        :param a: BxExMx3
-        :param b: BxExMx3
         :param translation: BxExMx3
+        :param orientation: BxExMx3
         :param world_points: BxExNx3 (fixed for all views)
         :param true_projected_points: BxExMxNx2
         :param minimum_distance: Minimum distance from the camera plane
@@ -69,7 +63,7 @@ class SimpleCameraModel(IOptimisableFunction):
         self._translation = translation
         self._world_points = world_points
         self._true_projected_points = true_projected_points
-        self._orientation = TwoVectorOrientation(a, b)
+        self._orientation = orientation
         self._camera_relative_points = None
         self._u = None
         self._v = None
@@ -89,7 +83,7 @@ class SimpleCameraModel(IOptimisableFunction):
 
     @property
     def num_parameters(self) -> int:
-        return 3 + 9 * self._num_views + 3 * self._num_points
+        return 3 + 6 * self._num_views + 3 * self._num_points
 
     @property
     def device(self) -> torch.device:
@@ -137,37 +131,28 @@ class SimpleCameraModel(IOptimisableFunction):
     def get_gradient(self) -> torch.Tensor:
         """Get the gradient for each estimate, BxExP"""
         if self._gradient is None:
-            rotation_matrix = self._orientation.get_rotation_matrix()
-            rotation_matrix_gradients = self._orientation.get_derivatives()
+            orientation_gradients = self._orientation.parameter_gradient(
+                self._world_points[:, :, None, :, :]
+            )
+            rotation_gradients = self._orientation.vector_gradient()
             camera_relative_points = self._get_camera_relative_points()
             u = self._get_u()
             v = self._get_v()
             residuals_u = u - self._true_projected_points[:, :, :, :, 0]
             residuals_v = v - self._true_projected_points[:, :, :, :, 1]
             partial_derivatives = _compute_gradient_from_intermediates(
-                x=self._world_points[:, :, None, :, 0],
-                y=self._world_points[:, :, None, :, 1],
-                z=self._world_points[:, :, None, :, 2],
                 x_prime=camera_relative_points[:, :, :, :, 0],
                 y_prime=camera_relative_points[:, :, :, :, 1],
                 z_prime=camera_relative_points[:, :, :, :, 2],
                 focal_length=self._focal_length,
-                rotation_matrix=rotation_matrix,
-                orientation_derivatives=rotation_matrix_gradients,
+                orientation_gradients=orientation_gradients,
+                rotated_vector_gradients=rotation_gradients,
             )
             self._gradient = _stack_gradients(
                 residuals_u, residuals_v, partial_derivatives
             )
             self._gradient_mask = None
         elif self._gradient_mask is not None:
-            rotation_matrix = self._orientation.get_rotation_matrix()
-            rotation_matrix = RotationMatrix(
-                *(value[self._gradient_mask] for value in rotation_matrix)
-            )
-            rotation_matrix_gradients = self._orientation.get_derivatives()
-            rotation_matrix_gradients = RotationMatrixDerivatives(
-                *(value[self._gradient_mask] for value in rotation_matrix_gradients)
-            )
             camera_relative_points = self._camera_relative_points()
             camera_relative_points = camera_relative_points[self._gradient_mask]
             u = self._get_u()
@@ -177,18 +162,20 @@ class SimpleCameraModel(IOptimisableFunction):
             focal_length = self._focal_length[self._gradient_mask]
             true_projected_points = self._true_projected_points[self._gradient_mask]
             world_points = self._world_points[self._gradient_mask]
+            orientation = self._orientation.slice(self._gradient_mask)
+            orientation_gradients = orientation.parameter_gradient(
+                world_points[:, None, :, :]
+            )
+            rotation_gradients = orientation.vector_gradient()
             residuals_u = u - true_projected_points[:, :, :, 0]
             residuals_v = v - true_projected_points[:, :, :, 1]
             partial_derivatives = _compute_gradient_from_intermediates(
-                x=world_points[:, None, :, 0],
-                y=world_points[:, None, :, 1],
-                z=world_points[:, None, :, 2],
                 x_prime=camera_relative_points[:, :, :, 0],
                 y_prime=camera_relative_points[:, :, :, 1],
                 z_prime=camera_relative_points[:, :, :, 2],
                 focal_length=focal_length,
-                rotation_matrix=rotation_matrix,
-                orientation_derivatives=rotation_matrix_gradients,
+                orientation_gradients=orientation_gradients,
+                rotated_vector_gradients=rotation_gradients,
             )
             gradient = _stack_gradients(residuals_u, residuals_v, partial_derivatives)
             self._gradient = self._gradient.masked_scatter(
@@ -199,25 +186,19 @@ class SimpleCameraModel(IOptimisableFunction):
 
     def add(self, parameters: torch.Tensor) -> Self:
         # Find the slice indices for the parameters, based on the number of views and world points
-        a1_idx = self.VIEW_START
-        a2_idx = a1_idx + self._num_views
-        a3_idx = a2_idx + self._num_views
-        b1_idx = a3_idx + self._num_views
-        b2_idx = b1_idx + self._num_views
-        b3_idx = b2_idx + self._num_views
-        tx_idx = b3_idx + self._num_views
+        a_idx = self.VIEW_START
+        b_idx = a_idx + self._num_views
+        c_idx = b_idx + self._num_views
+        tx_idx = c_idx + self._num_views
         ty_idx = tx_idx + self._num_views
         tz_idx = ty_idx + self._num_views
         x_idx = tz_idx + self._num_views
         y_idx = x_idx + self._num_points
         z_idx = y_idx + self._num_points
         end_idx = z_idx + self._num_points
-        a1_params = parameters[:, :, a1_idx:a2_idx]
-        a2_params = parameters[:, :, a2_idx:a3_idx]
-        a3_params = parameters[:, :, a3_idx:b1_idx]
-        b1_params = parameters[:, :, b1_idx:b2_idx]
-        b2_params = parameters[:, :, b2_idx:b3_idx]
-        b3_params = parameters[:, :, b3_idx:tx_idx]
+        a_params = parameters[:, :, a_idx:b_idx]
+        b_params = parameters[:, :, b_idx:c_idx]
+        c_params = parameters[:, :, c_idx:tx_idx]
         tx_params = parameters[:, :, tx_idx:ty_idx]
         ty_params = parameters[:, :, ty_idx:tz_idx]
         tz_params = parameters[:, :, tz_idx:x_idx]
@@ -225,18 +206,17 @@ class SimpleCameraModel(IOptimisableFunction):
         y_params = parameters[:, :, y_idx:z_idx]
         z_params = parameters[:, :, z_idx:end_idx]
 
-        a_params = torch.stack([a1_params, a2_params, a3_params], dim=2)
-        b_params = torch.stack([b1_params, b2_params, b3_params], dim=2)
         t_params = torch.stack([tx_params, ty_params, tz_params], dim=2)
         point_params = torch.stack([x_params, y_params, z_params], dim=2)
-
+        new_orientation = self._orientation.add_lie_parameters(
+            torch.stack([a_params, b_params, c_params], dim=2)
+        )
         return type(self)(
             focal_length=self._focal_length + parameters[:, :, self.F],
             cx=self._cx + parameters[:, :, self.CX],
             cy=self._cy + parameters[:, :, self.CY],
-            a=self._orientation.a + a_params,
-            b=self._orientation.b + b_params,
             translation=self._translation + t_params,
+            orientation=new_orientation,
             world_points=self._world_points + point_params,
             true_projected_points=self._true_projected_points,
             minimum_distance=self.minimum_distance,
@@ -249,8 +229,7 @@ class SimpleCameraModel(IOptimisableFunction):
         vector_mask = mask[:, :, None, None].tile(
             1, 1, self._translation.size(2), self._translation.size(3)
         )
-        a = torch.where(vector_mask, other._orientation.a, self._orientation.a)
-        b = torch.where(vector_mask, other._orientation.b, self._orientation.b)
+        orientation = self._orientation.masked_update(other._orientation, vector_mask.unsqueeze(-2))
         translation = torch.where(vector_mask, other._translation, self._translation)
         if other._world_points is self._world_points:
             # Simple shorthand equality check. If they happen to be the same tensor, we can just reuse it.
@@ -288,9 +267,8 @@ class SimpleCameraModel(IOptimisableFunction):
             focal_length=focal_length,
             cx=cx,
             cy=cy,
-            a=a,
-            b=b,
             translation=translation,
+            orientation=orientation,
             world_points=world_points,
             true_projected_points=true_projected_points,
             minimum_distance=self.minimum_distance,
@@ -305,36 +283,16 @@ class SimpleCameraModel(IOptimisableFunction):
         :returns: 3d points relative to each camera, shape BxExMxNx3
         """
         if self._camera_relative_points is None:
-            rotation_matrix = self._orientation.get_rotation_matrix()
-            x_prime = (
-                self._world_points[:, :, None, :, 0] * rotation_matrix.r1[:, :, :, None]
-                + self._world_points[:, :, None, :, 1]
-                * rotation_matrix.r2[:, :, :, None]
-                + self._world_points[:, :, None, :, 2]
-                * rotation_matrix.r3[:, :, :, None]
-                + self._translation[:, :, :, 0:1]
+            rotated_points = self._orientation.rotate_vector(
+                self._world_points[:, :, None, :, :]
             )
-            y_prime = (
-                self._world_points[:, :, None, :, 0] * rotation_matrix.r4[:, :, :, None]
-                + self._world_points[:, :, None, :, 1]
-                * rotation_matrix.r5[:, :, :, None]
-                + self._world_points[:, :, None, :, 2]
-                * rotation_matrix.r6[:, :, :, None]
-                + self._translation[:, :, :, 1:2]
-            )
-            z_prime = (
-                self._world_points[:, :, None, :, 0] * rotation_matrix.r7[:, :, :, None]
-                + self._world_points[:, :, None, :, 1]
-                * rotation_matrix.r8[:, :, :, None]
-                + self._world_points[:, :, None, :, 2]
-                * rotation_matrix.r9[:, :, :, None]
-                + self._translation[:, :, :, 2:3]
-            )
+            rotated_points = rotated_points + self._translation[:, :, :, None, :]
             # Clamp the camera-relative z' to treat all points as "in front" of the camera,
             # Due to the division, the optmisation cannot cross through Z' = 0,
             # because the projected points go to infinity, and thus so does the error.
-            z_prime = torch.clamp(z_prime, min=self.minimum_distance)
-            rotated_points = torch.stack([x_prime, y_prime, z_prime], dim=-1)
+            rotated_points[:, :, :, :, 2] = torch.clamp(
+                rotated_points[:, :, :, :, 2], min=self.minimum_distance
+            )
             self._camera_relative_points = rotated_points
         return self._camera_relative_points
 
@@ -373,18 +331,12 @@ class SimpleCameraModel(IOptimisableFunction):
 class _CameraGradients(NamedTuple):
     partial_du_df: torch.Tensor
     partial_dv_df: torch.Tensor
-    partial_du_da1: torch.Tensor
-    partial_dv_da1: torch.Tensor
-    partial_du_da2: torch.Tensor
-    partial_dv_da2: torch.Tensor
-    partial_du_da3: torch.Tensor
-    partial_dv_da3: torch.Tensor
-    partial_du_db1: torch.Tensor
-    partial_dv_db1: torch.Tensor
-    partial_du_db2: torch.Tensor
-    partial_dv_db2: torch.Tensor
-    partial_du_db3: torch.Tensor
-    partial_dv_db3: torch.Tensor
+    partial_du_da: torch.Tensor
+    partial_dv_da: torch.Tensor
+    partial_du_db: torch.Tensor
+    partial_dv_db: torch.Tensor
+    partial_du_dc: torch.Tensor
+    partial_dv_dc: torch.Tensor
     partial_du_dtx: torch.Tensor
     partial_dv_dty: torch.Tensor
     partial_du_dtz: torch.Tensor
@@ -398,27 +350,21 @@ class _CameraGradients(NamedTuple):
 
 
 def _compute_gradient_from_intermediates(
-    x: torch.Tensor,
-    y: torch.Tensor,
-    z: torch.Tensor,
     x_prime: torch.Tensor,
     y_prime: torch.Tensor,
     z_prime: torch.Tensor,
     focal_length: torch.Tensor,
-    rotation_matrix: RotationMatrix,
-    orientation_derivatives: RotationMatrixDerivatives,
+    orientation_gradients: torch.Tensor,
+    rotated_vector_gradients: torch.Tensor,
 ) -> _CameraGradients:
     """
     Compute the gradient of the error
-    :param x: BxEx1xN
-    :param y: BxEx1xN
-    :param z: BxEx1xN
     :param x_prime: BxExMxN
     :param y_prime: BxExMxN
     :param z_prime: BxExMxN
     :param focal_length: BxE
-    :param rotation_matrix:
-    :param orientation_derivatives:
+    :param orientation_gradients: BxExMxNx3x3
+    :param rotated_vector_gradients: BxExMx3x3
     :return:
     """
     while focal_length.ndim < z_prime.ndim:
@@ -442,130 +388,68 @@ def _compute_gradient_from_intermediates(
     partial_du_dtz = du_dzprime
     partial_dv_dtz = dv_dzprime
 
-    # The direction vector derivatives are built from the rotation vector derivatives
-    # Basically, we sum up du_dxprime * dxprime_dr1 * dr1_da1 for each coordinate and rotation matrix element
-    # dxprime_dr1 = x, dxprime_dr2 = y, dxprime_dr3 = z, and so on
-    partial_du_da1 = (
-        du_dxprime * x * orientation_derivatives.dr1_da1.unsqueeze(-1)
-        + du_dxprime * y * orientation_derivatives.dr2_da1.unsqueeze(-1)
-        + du_dxprime * z * orientation_derivatives.dr3_da1.unsqueeze(-1)
-        + du_dzprime * x * orientation_derivatives.dr7_da1.unsqueeze(-1)
-        + du_dzprime * y * orientation_derivatives.dr8_da1.unsqueeze(-1)
-        + du_dzprime * z * orientation_derivatives.dr9_da1.unsqueeze(-1)
+    # The rotation derivatives
+    partial_du_da = (
+        du_dxprime * orientation_gradients[:, :, :, :, 0, 0]
+        + du_dzprime * orientation_gradients[:, :, :, :, 2, 0]
     )
-    partial_du_da2 = (
-        du_dxprime * x * orientation_derivatives.dr1_da2.unsqueeze(-1)
-        + du_dxprime * y * orientation_derivatives.dr2_da2.unsqueeze(-1)
-        + du_dxprime * z * orientation_derivatives.dr3_da2.unsqueeze(-1)
-        + du_dzprime * x * orientation_derivatives.dr7_da2.unsqueeze(-1)
-        + du_dzprime * y * orientation_derivatives.dr8_da2.unsqueeze(-1)
-        + du_dzprime * z * orientation_derivatives.dr9_da2.unsqueeze(-1)
+    partial_du_db = (
+        du_dxprime * orientation_gradients[:, :, :, :, 0, 1]
+        + du_dzprime * orientation_gradients[:, :, :, :, 2, 1]
     )
-    partial_du_da3 = (
-        du_dxprime * x * orientation_derivatives.dr1_da3.unsqueeze(-1)
-        + du_dxprime * y * orientation_derivatives.dr2_da3.unsqueeze(-1)
-        + du_dxprime * z * orientation_derivatives.dr3_da3.unsqueeze(-1)
-        + du_dzprime * x * orientation_derivatives.dr7_da3.unsqueeze(-1)
-        + du_dzprime * y * orientation_derivatives.dr8_da3.unsqueeze(-1)
-        + du_dzprime * z * orientation_derivatives.dr9_da3.unsqueeze(-1)
+    partial_du_dc = (
+        du_dxprime * orientation_gradients[:, :, :, :, 0, 2]
+        + du_dzprime * orientation_gradients[:, :, :, :, 2, 2]
     )
-    partial_dv_da1 = (
-        dv_dyprime * x * orientation_derivatives.dr4_da1.unsqueeze(-1)
-        + dv_dyprime * y * orientation_derivatives.dr5_da1.unsqueeze(-1)
-        + dv_dyprime * z * orientation_derivatives.dr6_da1.unsqueeze(-1)
-        + dv_dzprime * x * orientation_derivatives.dr7_da1.unsqueeze(-1)
-        + dv_dzprime * y * orientation_derivatives.dr8_da1.unsqueeze(-1)
-        + dv_dzprime * z * orientation_derivatives.dr9_da1.unsqueeze(-1)
+    partial_dv_da = (
+        dv_dyprime * orientation_gradients[:, :, :, :, 1, 0]
+        + dv_dzprime * orientation_gradients[:, :, :, :, 2, 0]
     )
-    partial_dv_da2 = (
-        dv_dyprime * x * orientation_derivatives.dr4_da2.unsqueeze(-1)
-        + dv_dyprime * y * orientation_derivatives.dr5_da2.unsqueeze(-1)
-        + dv_dyprime * z * orientation_derivatives.dr6_da2.unsqueeze(-1)
-        + dv_dzprime * x * orientation_derivatives.dr7_da2.unsqueeze(-1)
-        + dv_dzprime * y * orientation_derivatives.dr8_da2.unsqueeze(-1)
-        + dv_dzprime * z * orientation_derivatives.dr9_da2.unsqueeze(-1)
+    partial_dv_db = (
+        dv_dyprime * orientation_gradients[:, :, :, :, 1, 1]
+        + dv_dzprime * orientation_gradients[:, :, :, :, 2, 1]
     )
-    partial_dv_da3 = (
-        dv_dyprime * x * orientation_derivatives.dr4_da3.unsqueeze(-1)
-        + dv_dyprime * y * orientation_derivatives.dr5_da3.unsqueeze(-1)
-        + dv_dyprime * z * orientation_derivatives.dr6_da3.unsqueeze(-1)
-        + dv_dzprime * x * orientation_derivatives.dr7_da3.unsqueeze(-1)
-        + dv_dzprime * y * orientation_derivatives.dr8_da3.unsqueeze(-1)
-        + dv_dzprime * z * orientation_derivatives.dr9_da3.unsqueeze(-1)
-    )
-    partial_du_db1 = (
-        du_dxprime * y * orientation_derivatives.dr2_db1.unsqueeze(-1)
-        + du_dxprime * z * orientation_derivatives.dr3_db1.unsqueeze(-1)
-        + du_dzprime * y * orientation_derivatives.dr8_db1.unsqueeze(-1)
-        + du_dzprime * z * orientation_derivatives.dr9_db1.unsqueeze(-1)
-    )
-    partial_du_db2 = (
-        du_dxprime * y * orientation_derivatives.dr2_db2.unsqueeze(-1)
-        + du_dxprime * z * orientation_derivatives.dr3_db2.unsqueeze(-1)
-        + du_dzprime * y * orientation_derivatives.dr8_db2.unsqueeze(-1)
-        + du_dzprime * z * orientation_derivatives.dr9_db2.unsqueeze(-1)
-    )
-    partial_du_db3 = (
-        du_dxprime * y * orientation_derivatives.dr2_db3.unsqueeze(-1)
-        + du_dxprime * z * orientation_derivatives.dr3_db3.unsqueeze(-1)
-        + du_dzprime * y * orientation_derivatives.dr8_db3.unsqueeze(-1)
-        + du_dzprime * z * orientation_derivatives.dr9_db3.unsqueeze(-1)
-    )
-    partial_dv_db1 = (
-        dv_dyprime * y * orientation_derivatives.dr5_db1.unsqueeze(-1)
-        + dv_dyprime * z * orientation_derivatives.dr6_db1.unsqueeze(-1)
-        + dv_dzprime * y * orientation_derivatives.dr8_db1.unsqueeze(-1)
-        + dv_dzprime * z * orientation_derivatives.dr9_db1.unsqueeze(-1)
-    )
-    partial_dv_db2 = (
-        dv_dyprime * y * orientation_derivatives.dr5_db2.unsqueeze(-1)
-        + dv_dyprime * z * orientation_derivatives.dr6_db2.unsqueeze(-1)
-        + dv_dzprime * y * orientation_derivatives.dr8_db2.unsqueeze(-1)
-        + dv_dzprime * z * orientation_derivatives.dr9_db2.unsqueeze(-1)
-    )
-    partial_dv_db3 = (
-        dv_dyprime * y * orientation_derivatives.dr5_db3.unsqueeze(-1)
-        + dv_dyprime * z * orientation_derivatives.dr6_db3.unsqueeze(-1)
-        + dv_dzprime * y * orientation_derivatives.dr8_db3.unsqueeze(-1)
-        + dv_dzprime * z * orientation_derivatives.dr9_db3.unsqueeze(-1)
+    partial_dv_dc = (
+        dv_dyprime * orientation_gradients[:, :, :, :, 1, 2]
+        + dv_dzprime * orientation_gradients[:, :, :, :, 2, 2]
     )
 
     # Lastly, the gradients for the world points
     # These are again chain rule patterns
-    partial_du_dx = du_dxprime * rotation_matrix.r1.unsqueeze(
-        -1
-    ) + du_dzprime * rotation_matrix.r7.unsqueeze(-1)
-    partial_dv_dx = dv_dyprime * rotation_matrix.r4.unsqueeze(
-        -1
-    ) + dv_dzprime * rotation_matrix.r7.unsqueeze(-1)
-    partial_du_dy = du_dxprime * rotation_matrix.r2.unsqueeze(
-        -1
-    ) + dv_dzprime * rotation_matrix.r8.unsqueeze(-1)
-    partial_dv_dy = dv_dyprime * rotation_matrix.r5.unsqueeze(
-        -1
-    ) + dv_dzprime * rotation_matrix.r8.unsqueeze(-1)
-    partial_du_dz = du_dxprime * rotation_matrix.r3.unsqueeze(
-        -1
-    ) + du_dzprime * rotation_matrix.r9.unsqueeze(-1)
-    partial_dv_dz = dv_dyprime * rotation_matrix.r6.unsqueeze(
-        -1
-    ) + dv_dzprime * rotation_matrix.r9.unsqueeze(-1)
+    partial_du_dx = (
+        du_dxprime * rotated_vector_gradients[:, :, :, :, 0, 0]
+        + du_dzprime * rotated_vector_gradients[:, :, :, :, 2, 0]
+    )
+    partial_dv_dx = (
+        dv_dyprime * rotated_vector_gradients[:, :, :, :, 1, 0]
+        + dv_dzprime * rotated_vector_gradients[:, :, :, :, 2, 0]
+    )
+    partial_du_dy = (
+        du_dxprime * rotated_vector_gradients[:, :, :, :, 0, 1]
+        + dv_dzprime * rotated_vector_gradients[:, :, :, :, 2, 1]
+    )
+    partial_dv_dy = (
+        dv_dyprime * rotated_vector_gradients[:, :, :, :, 1, 1]
+        + dv_dzprime * rotated_vector_gradients[:, :, :, :, 2, 1]
+    )
+    partial_du_dz = (
+        du_dxprime * rotated_vector_gradients[:, :, :, :, 0, 2]
+        + du_dzprime * rotated_vector_gradients[:, :, :, :, 2, 2]
+    )
+    partial_dv_dz = (
+        dv_dyprime * rotated_vector_gradients[:, :, :, :, 1, 2]
+        + dv_dzprime * rotated_vector_gradients[:, :, :, :, 2, 2]
+    )
 
     return _CameraGradients(
         partial_du_df=partial_du_df,
         partial_dv_df=partial_dv_df,
-        partial_du_da1=partial_du_da1,
-        partial_dv_da1=partial_dv_da1,
-        partial_du_da2=partial_du_da2,
-        partial_dv_da2=partial_dv_da2,
-        partial_du_da3=partial_du_da3,
-        partial_dv_da3=partial_dv_da3,
-        partial_du_db1=partial_du_db1,
-        partial_dv_db1=partial_dv_db1,
-        partial_du_db2=partial_du_db2,
-        partial_dv_db2=partial_dv_db2,
-        partial_du_db3=partial_du_db3,
-        partial_dv_db3=partial_dv_db3,
+        partial_du_da=partial_du_da,
+        partial_dv_da=partial_dv_da,
+        partial_du_db=partial_du_db,
+        partial_dv_db=partial_dv_db,
+        partial_du_dc=partial_du_dc,
+        partial_dv_dc=partial_dv_dc,
         partial_du_dtx=partial_du_dtx,
         partial_dv_dty=partial_dv_dty,
         partial_du_dtz=partial_du_dtz,
@@ -589,29 +473,18 @@ def _stack_gradients(
     cy_gradients = residuals_v.sum(dim=(-2, -1)).unsqueeze(-1)
     # FX derivatives are summed over both the views and the points
     f_gradients = (
-        (
-            (residuals_u * partial_derivatives.partial_du_df).sum(dim=(-2, -1))
-            + (residuals_v * partial_derivatives.partial_dv_df).sum(dim=(-2, -1))
-        ).unsqueeze(-1)
-    )
+        (residuals_u * partial_derivatives.partial_du_df).sum(dim=(-2, -1))
+        + (residuals_v * partial_derivatives.partial_dv_df).sum(dim=(-2, -1))
+    ).unsqueeze(-1)
     # Compute camera view gradients. Summed over all world points
-    a1_gradients = (residuals_u * partial_derivatives.partial_du_da1).sum(dim=-1) + (
-        residuals_v * partial_derivatives.partial_dv_da1
+    a_gradients = (residuals_u * partial_derivatives.partial_du_da).sum(dim=-1) + (
+        residuals_v * partial_derivatives.partial_dv_da
     ).sum(dim=-1)
-    a2_gradients = (residuals_u * partial_derivatives.partial_du_da2).sum(dim=-1) + (
-        residuals_v * partial_derivatives.partial_dv_da2
+    b_gradients = (residuals_u * partial_derivatives.partial_du_db).sum(dim=-1) + (
+        residuals_v * partial_derivatives.partial_dv_db
     ).sum(dim=-1)
-    a3_gradients = (residuals_u * partial_derivatives.partial_du_da3).sum(dim=-1) + (
-        residuals_v * partial_derivatives.partial_dv_da3
-    ).sum(dim=-1)
-    b1_gradients = (residuals_u * partial_derivatives.partial_du_db1).sum(dim=-1) + (
-        residuals_v * partial_derivatives.partial_dv_db1
-    ).sum(dim=-1)
-    b2_gradients = (residuals_u * partial_derivatives.partial_du_db2).sum(dim=-1) + (
-        residuals_v * partial_derivatives.partial_dv_db2
-    ).sum(dim=-1)
-    b3_gradients = (residuals_u * partial_derivatives.partial_du_db3).sum(dim=-1) + (
-        residuals_v * partial_derivatives.partial_dv_db3
+    c_gradients = (residuals_u * partial_derivatives.partial_du_dc).sum(dim=-1) + (
+        residuals_v * partial_derivatives.partial_dv_dc
     ).sum(dim=-1)
     tx_gradients = (residuals_u * partial_derivatives.partial_du_dtx).sum(dim=-1)
     ty_gradients = (residuals_v * partial_derivatives.partial_dv_dty).sum(dim=-1)
@@ -636,12 +509,9 @@ def _stack_gradients(
             cy_gradients,
             f_gradients,
             # Stack the camera gradients, by parameter
-            a1_gradients,
-            a2_gradients,
-            a3_gradients,
-            b1_gradients,
-            b2_gradients,
-            b3_gradients,
+            a_gradients,
+            b_gradients,
+            c_gradients,
             tx_gradients,
             ty_gradients,
             tz_gradients,
