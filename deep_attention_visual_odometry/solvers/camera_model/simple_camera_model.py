@@ -155,31 +155,35 @@ class SimpleCameraModel(IOptimisableFunction):
         elif self._gradient_mask is not None:
             camera_relative_points = self._get_camera_relative_points()
             camera_relative_points = camera_relative_points[self._gradient_mask]
+            camera_relative_points = camera_relative_points.unsqueeze(1)
             u = self._get_u()
             u = u[self._gradient_mask]
+            u = u.unsqueeze(1)
             v = self._get_v()
             v = v[self._gradient_mask]
+            v = v.unsqueeze(1)
             focal_length = self._focal_length[self._gradient_mask]
+            focal_length = focal_length.unsqueeze(1)
             true_projected_points = self._true_projected_points[self._gradient_mask]
+            true_projected_points = true_projected_points.unsqueeze(1)
             world_points = self._world_points[self._gradient_mask]
+            world_points = world_points.unsqueeze(1)
             orientation = self._orientation.slice(self._gradient_mask)
-            orientation_gradients = orientation.parameter_gradient(
-                world_points[:, None, :, :]
-            )
+            orientation_gradients = orientation.parameter_gradient(world_points[:, :, None, :, :])
             rotation_gradients = orientation.vector_gradient()
-            residuals_u = u - true_projected_points[:, :, :, 0]
-            residuals_v = v - true_projected_points[:, :, :, 1]
+            residuals_u = u - true_projected_points[:, :, :, :, 0]
+            residuals_v = v - true_projected_points[:, :, :, :, 1]
             partial_derivatives = _compute_gradient_from_intermediates(
-                x_prime=camera_relative_points[:, :, :, 0],
-                y_prime=camera_relative_points[:, :, :, 1],
-                z_prime=camera_relative_points[:, :, :, 2],
+                x_prime=camera_relative_points[:, :, :, :, 0],
+                y_prime=camera_relative_points[:, :, :, :, 1],
+                z_prime=camera_relative_points[:, :, :, :, 2],
                 focal_length=focal_length,
                 orientation_gradients=orientation_gradients,
                 rotated_vector_gradients=rotation_gradients,
             )
             gradient = _stack_gradients(residuals_u, residuals_v, partial_derivatives)
             self._gradient = self._gradient.masked_scatter(
-                self._gradient_mask, gradient
+                self._gradient_mask.unsqueeze(-1), gradient
             )
             self._gradient_mask = None
         return self._gradient

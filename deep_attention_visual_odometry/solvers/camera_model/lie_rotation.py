@@ -169,7 +169,10 @@ class LieRotation:
 
     def slice(self, mask: torch.Tensor) -> Self:
         """Slice the batch dimensions (if any), returning a rotation for some of the values."""
-        return type(self)(self._lie_vector[mask])
+        sliced_vector = self._lie_vector[mask]
+        for _ in range(mask.ndim - 1):
+            sliced_vector = sliced_vector.unsqueeze(1)
+        return type(self)(sliced_vector)
 
     def add_lie_parameters(self, lie_vector) -> Self:
         """Add a set of parameters to the current values (such as from a gradient)"""
