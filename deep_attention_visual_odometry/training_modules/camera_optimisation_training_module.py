@@ -9,7 +9,7 @@ class CameraOptmisationTrainingModule(LightningModule):
     def __init__(self, network: nn.Module):
         super().__init__()
         self.network = network
-        self.loss_fn = nn.L1Loss()
+        self.loss_fn = nn.MSELoss(reduction="mean")
 
     def training_step(self, batch: CameraViewsAndPoints, batch_idx):
         return self._step(batch, "Training")
@@ -27,10 +27,16 @@ class CameraOptmisationTrainingModule(LightningModule):
         log_weights: bool = False,
     ):
         predictions = self.network(batch.projected_points)
-        predicted_parameters =
+        focal_length_loss = self.loss_fn(
+            predictions.focal_length, batch.camera_intrinsics[:, :, 0, 0]
+        )
+        cx_loss = self.loss_fn(predictions.cx, batch.camera_intrinsics[:, :, 2, 0])
+        cy_loss = self.loss_fn(predictions.cy, batch.camera_intrinsics[:, :, 2, 0])
+        self.log(f"{step_name} focal length loss", focal_length_loss)
+        self.log(f"{step_name} cx loss", cx_loss)
+        self.log(f"{step_name} cy loss", cy_loss)
 
-        # Take an l1 loss between the predicted and actual parameters
-        loss = self.loss_fn(predicted_parameters, batch.parameters)
+        loss = focal_length_loss + cx_loss + cy_loss
         self.log(f"{step_name} loss", loss)
         return loss
 
