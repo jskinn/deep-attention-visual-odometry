@@ -1,6 +1,7 @@
 import math
 import pytest
 import torch
+import torch.nn as nn
 from deep_attention_visual_odometry.solvers.camera_model import SimpleCameraModel
 from deep_attention_visual_odometry.solvers.camera_model.lie_rotation import LieRotation
 
@@ -578,3 +579,171 @@ def test_orientation_x_gradient_is_high_if_incorrect():
     gradient = camera_model.get_gradient()
     assert gradient.shape == (1, 1, 3 + 6 * num_views + 3 * num_points)
     assert gradient[0, 0, 3] < -1.0
+
+
+def test_tensor_gradient_passes_from_error_to_inputs():
+    batch_size = 3
+    num_estimates = 7
+    num_views = 5
+    num_points = 11
+    focal_length = (340 * torch.ones(batch_size, num_estimates)).requires_grad_()
+    cx = (320 * torch.ones(batch_size, num_estimates)).requires_grad_()
+    cy = (240 * torch.ones(batch_size, num_estimates)).requires_grad_()
+    translation = (
+        torch.tensor([-1.0, 2.0, -0.3])
+        .reshape(1, 1, 1, 3)
+        .tile(batch_size, num_estimates, num_views, 1)
+        .requires_grad_()
+    )
+    orientation = (
+        torch.tensor([0.2, -0.02, -0.004])
+        .reshape(1, 1, 1, 1, 3)
+        .tile(batch_size, num_estimates, num_views, 1, 1)
+        .requires_grad_()
+    )
+    world_points = (
+        torch.tensor(list(range(batch_size * num_estimates * num_points * 3)))
+        .reshape(batch_size, num_estimates, num_points, 3)
+        .to(torch.float)
+        .requires_grad_()
+    )
+    true_projected_points = (
+        torch.tensor(
+            list(range(batch_size * num_estimates * num_views * num_points * 2))
+        )
+        .reshape(batch_size, num_estimates, num_views, num_points, 2)
+        .to(torch.float)
+        .requires_grad_()
+    )
+    camera_model = SimpleCameraModel(
+        focal_length=focal_length,
+        cx=cx,
+        cy=cy,
+        translation=translation,
+        orientation=LieRotation(orientation),
+        world_points=world_points,
+        true_projected_points=true_projected_points,
+    )
+    error = camera_model.get_error()
+    assert error.requires_grad is True
+    assert error.grad_fn is not None
+    loss = error.square().sum()
+    loss.backward()
+    assert focal_length.grad is not None
+    assert torch.all(torch.greater(torch.abs(focal_length.grad), 0))
+    assert focal_length.grad is not None
+    assert torch.all(torch.greater(torch.abs(focal_length.grad), 0))
+    assert cx.grad is not None
+    assert torch.all(torch.greater(torch.abs(cx.grad), 0))
+    assert cy.grad is not None
+    assert torch.all(torch.greater(torch.abs(cy.grad), 0))
+    assert translation.grad is not None
+    assert torch.all(torch.greater(torch.abs(translation.grad), 0))
+    assert orientation.grad is not None
+    assert torch.all(torch.greater(torch.abs(orientation.grad), 0))
+    assert world_points.grad is not None
+    assert torch.all(torch.greater(torch.abs(true_projected_points.grad), 0))
+
+
+def test_tensor_gradient_passes_from_gradient_to_inputs():
+    batch_size = 3
+    num_estimates = 7
+    num_views = 5
+    num_points = 11
+    focal_length = (340 * torch.ones(batch_size, num_estimates)).requires_grad_()
+    cx = (320 * torch.ones(batch_size, num_estimates)).requires_grad_()
+    cy = (240 * torch.ones(batch_size, num_estimates)).requires_grad_()
+    translation = (
+        torch.tensor([-1.0, 2.0, -0.3])
+        .reshape(1, 1, 1, 3)
+        .tile(batch_size, num_estimates, num_views, 1)
+        .requires_grad_()
+    )
+    orientation = (
+        torch.tensor([0.2, -0.02, -0.004])
+        .reshape(1, 1, 1, 1, 3)
+        .tile(batch_size, num_estimates, num_views, 1, 1)
+        .requires_grad_()
+    )
+    world_points = (
+        torch.tensor(list(range(batch_size * num_estimates * num_points * 3)))
+        .reshape(batch_size, num_estimates, num_points, 3)
+        .to(torch.float)
+        .requires_grad_()
+    )
+    true_projected_points = (
+        torch.tensor(
+            list(range(batch_size * num_estimates * num_views * num_points * 2))
+        )
+        .reshape(batch_size, num_estimates, num_views, num_points, 2)
+        .to(torch.float)
+        .requires_grad_()
+    )
+    camera_model = SimpleCameraModel(
+        focal_length=focal_length,
+        cx=cx,
+        cy=cy,
+        translation=translation,
+        orientation=LieRotation(orientation),
+        world_points=world_points,
+        true_projected_points=true_projected_points,
+    )
+    gradient = camera_model.get_gradient()
+    assert gradient.requires_grad is True
+    assert gradient.grad_fn is not None
+    loss = gradient.square().sum()
+    loss.backward()
+    assert focal_length.grad is not None
+    assert torch.all(torch.greater(torch.abs(focal_length.grad), 0))
+    assert focal_length.grad is not None
+    assert torch.all(torch.greater(torch.abs(focal_length.grad), 0))
+    assert cx.grad is not None
+    assert torch.all(torch.greater(torch.abs(cx.grad), 0))
+    assert cy.grad is not None
+    assert torch.all(torch.greater(torch.abs(cy.grad), 0))
+    assert translation.grad is not None
+    assert torch.all(torch.greater(torch.abs(translation.grad), 0))
+    assert orientation.grad is not None
+    assert torch.all(torch.greater(torch.abs(orientation.grad), 0))
+    assert world_points.grad is not None
+    assert torch.all(torch.greater(torch.abs(true_projected_points.grad), 0))
+
+
+class CameraModule(nn.Module):
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        batch_size = x.size(0)
+        num_estimates = x.size(1)
+        num_views = 5
+        num_points = 11
+        camera_model = SimpleCameraModel(
+            focal_length=x,
+            cx=320 * torch.ones(batch_size, num_estimates),
+            cy=240 * torch.ones(batch_size, num_estimates),
+            translation=torch.tensor([-1.0, 2.0, -0.3])
+            .reshape(1, 1, 1, 3)
+            .tile(batch_size, num_estimates, num_views, 1),
+            orientation=LieRotation(
+                torch.tensor([0.2, -0.02, -0.004])
+                .reshape(1, 1, 1, 1, 3)
+                .tile(batch_size, num_estimates, num_views, 1, 1)
+            ),
+            world_points=torch.tensor(
+                list(range(batch_size * num_estimates * num_points * 3))
+            )
+            .reshape(batch_size, num_estimates, num_points, 3)
+            .to(torch.float),
+            true_projected_points=torch.tensor(
+                list(range(batch_size * num_estimates * num_views * num_points * 2))
+            ).reshape(batch_size, num_estimates, num_views, num_points, 2),
+        )
+        error = camera_model.get_error()
+        gradient = camera_model.get_gradient()
+        return error, gradient
+
+
+def test_can_be_compiled():
+    focal_length = 340 * torch.ones(3, 7)
+    rotation_comp = torch.compile(CameraModule())
+    error, gradient = rotation_comp(focal_length)
+    assert error.shape == (3, 7)
+    assert gradient.shape == (3, 7, 3 + 6 * 5 + 3 * 11)

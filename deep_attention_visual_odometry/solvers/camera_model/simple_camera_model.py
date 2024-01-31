@@ -229,7 +229,9 @@ class SimpleCameraModel(IOptimisableFunction):
         vector_mask = mask[:, :, None, None].tile(
             1, 1, self._translation.size(2), self._translation.size(3)
         )
-        orientation = self._orientation.masked_update(other._orientation, vector_mask.unsqueeze(-2))
+        orientation = self._orientation.masked_update(
+            other._orientation, vector_mask.unsqueeze(-2)
+        )
         translation = torch.where(vector_mask, other._translation, self._translation)
         if other._world_points is self._world_points:
             # Simple shorthand equality check. If they happen to be the same tensor, we can just reuse it.
@@ -290,8 +292,15 @@ class SimpleCameraModel(IOptimisableFunction):
             # Clamp the camera-relative z' to treat all points as "in front" of the camera,
             # Due to the division, the optmisation cannot cross through Z' = 0,
             # because the projected points go to infinity, and thus so does the error.
-            rotated_points[:, :, :, :, 2] = torch.clamp(
-                rotated_points[:, :, :, :, 2], min=self.minimum_distance
+            # It is a relatively safe assumption that any point we can see, is in front of the camera.
+            rotated_points = torch.cat(
+                [
+                    rotated_points[:, :, :, :, 0:2],
+                    torch.clamp(
+                        rotated_points[:, :, :, :, 2:3], min=self.minimum_distance
+                    ),
+                ],
+                dim=-1,
             )
             self._camera_relative_points = rotated_points
         return self._camera_relative_points
