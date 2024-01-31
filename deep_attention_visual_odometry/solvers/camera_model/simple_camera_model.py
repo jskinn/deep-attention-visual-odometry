@@ -153,7 +153,7 @@ class SimpleCameraModel(IOptimisableFunction):
             )
             self._gradient_mask = None
         elif self._gradient_mask is not None:
-            camera_relative_points = self._camera_relative_points()
+            camera_relative_points = self._get_camera_relative_points()
             camera_relative_points = camera_relative_points[self._gradient_mask]
             u = self._get_u()
             u = u[self._gradient_mask]
@@ -206,10 +206,10 @@ class SimpleCameraModel(IOptimisableFunction):
         y_params = parameters[:, :, y_idx:z_idx]
         z_params = parameters[:, :, z_idx:end_idx]
 
-        t_params = torch.stack([tx_params, ty_params, tz_params], dim=2)
-        point_params = torch.stack([x_params, y_params, z_params], dim=2)
+        t_params = torch.stack([tx_params, ty_params, tz_params], dim=-1)
+        point_params = torch.stack([x_params, y_params, z_params], dim=-1)
         new_orientation = self._orientation.add_lie_parameters(
-            torch.stack([a_params, b_params, c_params], dim=2)
+            torch.stack([a_params, b_params, c_params], dim=-1).unsqueeze(-2)
         )
         return type(self)(
             focal_length=self._focal_length + parameters[:, :, self.F],

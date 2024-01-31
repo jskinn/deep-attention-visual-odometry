@@ -56,7 +56,8 @@ class BFGSCameraSolver(nn.Module):
         for step in range(self.max_iterations):
             # Compute a search direction as -H \delta f
             gradient = function.get_gradient()
-            search_direction = -1 * torch.matmul(inverse_hessian, gradient)
+            search_direction = -1.0 * torch.matmul(inverse_hessian, gradient.unsqueeze(-1))
+            search_direction = search_direction.squeeze(-1)
             # Line search for an update step that satisfies the wolfe conditions
             next_function_point, step = self.line_search(function, search_direction)
             # Update the inverse hessian based on the next chosen point
