@@ -5,14 +5,23 @@ model:
   class_path: deep_attention_visual_odometry.training_modules.CameraOptmisationTrainingModule
   init_args:
     network:
-      class_path: deep_attention_visual_odometry.solvers.BFGSCameraSolver
+      class_path: deep_attention_visual_odometry.networks.simple_camera_bgfs_model.SimpleCameraBGFSModel
+      init_args:
+        num_views: 4
+        num_points: 8
+        max_iterations: 20
+        epsilon: 1e-6
+        max_step_size: 32
+        zoom_iterations: 10
+        sufficient_decrease: 1e-4
+        curvature: 0.9
 data:
   class_path: deep_attention_visual_odometry.data_modules.CameraViewDataModule
   init_args:
     batch_size: 64
-    num_workers: 8
-    num_points: 128
-    num_views: 6
+    num_workers: 0
+    num_points: 8
+    num_views: 4
     training_length: 1024
     validation_length: 128
     test_length: 128
