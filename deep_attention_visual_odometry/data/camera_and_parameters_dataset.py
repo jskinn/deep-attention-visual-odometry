@@ -30,7 +30,7 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
             dtype=torch.float32,
         )
         self._points_std = torch.tensor([3.0, 3.0, 3.0], dtype=torch.float32).reshape(
-            1, 3, 1
+            1, 3
         )
 
     def __len__(self) -> int:
@@ -73,11 +73,11 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         # looking approximately through the centre of mass of the points
         camera_direction = torch.randn(3, dtype=torch.float32)
         camera_direction = camera_direction / torch.linalg.vector_norm(
-            camera_direction, keep_dim=True
+            camera_direction, dim=-1, keepdim=True
         )
         up_direction = torch.randn(3, dtype=torch.float32)
         up_direction = up_direction / torch.linalg.vector_norm(
-            up_direction, keep_dim=True
+            up_direction, dim=-1, keepdim=True
         )
         camera_distance = (
             self._camera_distance_mean
@@ -109,9 +109,9 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         # Orthonormalise to produce a rotation matrix
         forward = camera_targets - camera_locations
         up = camera_up - camera_locations
-        forward = forward / torch.linalg.vector_norm(forward, keep_dim=True)
-        up = up - forward * torch.dot(forward, up).unsqueeze(-1)
-        up = up / torch.linalg.vector_norm(up, keep_dim=True)
+        forward = forward / torch.linalg.vector_norm(forward, keepdim=True)
+        up = up - forward * (forward * up).sum(dim=-1, keepdims=True)
+        up = up / torch.linalg.vector_norm(up, keepdim=True)
         left = torch.linalg.cross(forward, up)
 
         # Assemble 4x4 extrinisics matrices
@@ -134,11 +134,9 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         )
         return torch.tensor(
             [
-                [
-                    [camera_parameters[0], 0.0, camera_parameters[1], 0.0],
-                    [0.0, camera_parameters[0], camera_parameters[2], 0.0],
-                    [0.0, 0.0, 1.0, 0.0],
-                ]
+                [camera_parameters[0], 0.0, camera_parameters[1], 0.0],
+                [0.0, camera_parameters[0], camera_parameters[2], 0.0],
+                [0.0, 0.0, 1.0, 0.0],
             ]
         )
 
@@ -149,12 +147,18 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         camera_intrinisics: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         augmented_points = torch.cat(
-            [world_points, torch.ones_like(world_points[:, 0:1])]
+            [world_points, torch.ones_like(world_points[:, 0:1])], dim=1
         )
         inv_transforms = torch.linalg.inv(camera_extrinisics)
-        camera_relative_points = torch.matmul(inv_transforms, augmented_points)
-        projected_points = torch.matmul(camera_intrinisics, camera_relative_points)
-        projected_points = projected_points[:, :, 0:2] / projected_points[:, :, 2:3]
+        camera_relative_points = torch.matmul(
+            inv_transforms[:, None, :, :], augmented_points[None, :, :, None]
+        )
+        projected_points = torch.matmul(
+            camera_intrinisics[None, None, :, :], camera_relative_points
+        )
+        projected_points = (
+            projected_points[:, :, 0:2, 0] / projected_points[:, :, 2:3, 0]
+        )
         # weights = torch.where(projected_points[])
         return projected_points, torch.ones_like(projected_points[:, :, 0])
 
