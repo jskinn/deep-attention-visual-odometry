@@ -8,9 +8,9 @@ class SimpleCameraModelInitialGuess(nn.Module):
 
     def __init__(self, num_views: int, num_points: int):
         super().__init__()
-        self.focal_length = nn.Parameter(torch.tensor([[60.0]]))
-        self.cx = nn.Parameter(torch.tensor([[320.]]))
-        self.cy = nn.Parameter(torch.tensor([[240.]]))
+        self.focal_length = nn.Parameter(torch.tensor([[0.5]]))
+        self.cx = nn.Parameter(torch.tensor([[0.]]))
+        self.cy = nn.Parameter(torch.tensor([[0.]]))
         self.orientation = nn.Parameter(torch.tensor([0, 0., 0.]).reshape(1, 1, 1, 1, 3).tile(1, 1, num_views, 1, 1))
         translation = torch.zeros(1, 1, num_views, 3)
         translation[:, :, :, 2] = 10.0

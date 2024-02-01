@@ -8,16 +8,12 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
     A dataset that randomly generates 3D points, and projects them through a random transform and camera matrix
     """
 
-    def __init__(self, epoch_length: int, num_points: int, num_views: int):
+    def __init__(self, epoch_length: int, num_points: int, num_views: int, min_camera_distance: float = 0.1):
         self.epoch_length = int(epoch_length)
         self._num_points = int(num_points)
         self._num_views = int(num_views)
-        self._camera_parameter_means = torch.tensor(
-            [640.0, 320.0, 240.0], dtype=torch.float32
-        )
-        self._camera_parameter_std = torch.tensor(
-            [100.0, 100.0, 100.0], dtype=torch.float32
-        )
+        self._min_camera_distance = float(min_camera_distance)
+
         self._camera_distance_mean = 15.0
         self._camera_distance_std = 5.0
         self._camera_location_spread = torch.tensor(
@@ -41,7 +37,7 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
             raise IndexError(f"Index {item} out of range")
 
         world_points = self._generate_world_points()
-        camera_extrinsics = self._generate_camera_extrinisics(world_points.mean(dim=0))
+        camera_extrinsics = self._generate_camera_extrinisics(world_points)
         camera_intrinsics = self._generate_camera_intrinsics()
         projected_points, projection_weights = self._project_points(
             world_points, camera_extrinsics, camera_intrinsics
@@ -64,13 +60,14 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         world_points[1, 2] = 0.0
         return torch.cat([torch.zeros(1, 3, dtype=torch.float32), world_points])
 
-    def _generate_camera_extrinisics(self, world_centre: torch.Tensor) -> torch.Tensor:
+    def _generate_camera_extrinisics(self, world_points: torch.Tensor) -> torch.Tensor:
         # TODO:
         # - Pick three points: A location, a view target, and an up direction
         # - Perturb each of those base points for each camera
         # - Orthonomralise (target - location) and (up - location) to produce a rotation matrix
         # This should give us n views with similar but spread out locations,
         # looking approximately through the centre of mass of the points
+        world_centre = world_points.mean(dim=0)
         camera_direction = torch.randn(3, dtype=torch.float32)
         camera_direction = camera_direction / torch.linalg.vector_norm(
             camera_direction, dim=-1, keepdim=True
@@ -114,6 +111,13 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         up = up / torch.linalg.vector_norm(up, keepdim=True)
         left = torch.linalg.cross(forward, up)
 
+        # Check that the points are all at least the minimum distance away
+        z_distances = (forward[:, None, :] * (world_points[None, :, :] - camera_locations[:, None, :])).sum(dim=-1)
+        z_distances = z_distances - self._min_camera_distance
+        z_distances, _ = torch.min(z_distances, dim=-1)
+        z_distances = torch.where(z_distances < 0.0, z_distances, torch.zeros_like(z_distances))
+        camera_locations = camera_locations - z_distances[:, None] * forward
+
         # Assemble 4x4 extrinisics matrices
         transforms = torch.zeros(self._num_views, 4, 4, dtype=torch.float32)
         transforms[:, 3, 3] = 1.0
@@ -129,13 +133,13 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         return transforms
 
     def _generate_camera_intrinsics(self) -> torch.Tensor:
-        camera_parameters = (
-            self._camera_parameter_means + torch.randn(3) * self._camera_parameter_std
-        )
+        angle = torch.pi / 18 + (8 * torch.pi / 18) * torch.rand(1)
+        image_centre = 0.5 * torch.randn(2)
+        focal_length = 1.0 / torch.tan(angle / 2.0)
         return torch.tensor(
             [
-                [camera_parameters[0], 0.0, camera_parameters[1], 0.0],
-                [0.0, camera_parameters[0], camera_parameters[2], 0.0],
+                [focal_length, 0.0, image_centre[0], 0.0],
+                [0.0, focal_length, image_centre[1], 0.0],
                 [0.0, 0.0, 1.0, 0.0],
             ]
         )
