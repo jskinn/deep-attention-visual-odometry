@@ -51,12 +51,13 @@ class SimpleCameraModel(IOptimisableFunction):
         :param translation: BxExMx3
         :param orientation: BxExMx3
         :param world_points: BxExNx3 (fixed for all views)
-        :param true_projected_points: BxExMxNx2
+        :param true_projected_points: BxMxNx2
         :param minimum_distance: Minimum distance from the camera plane
         """
         self.minimum_distance = float(minimum_distance)
-        self._num_views = true_projected_points.size(2)
-        self._num_points = true_projected_points.size(3)
+        self._num_views = true_projected_points.size(1)
+        self._num_points = true_projected_points.size(2)
+        self._num_estimates = focal_length.size(1)
         self._focal_length = focal_length
         self._cx = cx
         self._cy = cy
@@ -79,11 +80,11 @@ class SimpleCameraModel(IOptimisableFunction):
 
     @property
     def num_estimates(self) -> int:
-        return self._true_projected_points.size(1)
+        return self._num_estimates
 
     @property
     def num_parameters(self) -> int:
-        return 3 + 6 * self._num_views + 3 * self._num_points
+        return 3 + 6 * self._num_views + 3 * self._num_points - 7
 
     @property
     def device(self) -> torch.device:
@@ -108,9 +109,11 @@ class SimpleCameraModel(IOptimisableFunction):
         if self._error is None:
             u = self._get_u()
             v = self._get_v()
-            self._error = (u - self._true_projected_points[:, :, :, :, 0]).square().sum(
-                dim=(-2, -1)
-            ) + (v - self._true_projected_points[:, :, :, :, 1]).square().sum(
+            self._error = (
+                u - self._true_projected_points[:, None, :, :, 0]
+            ).square().sum(dim=(-2, -1)) + (
+                v - self._true_projected_points[:, None, :, :, 1]
+            ).square().sum(
                 dim=(-2, -1)
             )
             self._error_mask = None
@@ -120,7 +123,10 @@ class SimpleCameraModel(IOptimisableFunction):
             to_update = torch.logical_not(self._error_mask)
             u = u[to_update]
             v = v[to_update]
-            true_projected_points = self._true_projected_points[to_update]
+            true_projected_points = self._true_projected_points.unsqueeze(1).tile(
+                1, self.num_estimates, 1, 1, 1
+            )
+            true_projected_points = true_projected_points[to_update]
             new_error = (u - true_projected_points[:, :, :, 0]).square().sum(
                 dim=(-2, -1)
             ) + (v - true_projected_points[:, :, :, 1]).square().sum(dim=(-2, -1))
@@ -138,8 +144,8 @@ class SimpleCameraModel(IOptimisableFunction):
             camera_relative_points = self._get_camera_relative_points()
             u = self._get_u()
             v = self._get_v()
-            residuals_u = u - self._true_projected_points[:, :, :, :, 0]
-            residuals_v = v - self._true_projected_points[:, :, :, :, 1]
+            residuals_u = u - self._true_projected_points[:, None, :, :, 0]
+            residuals_v = v - self._true_projected_points[:, None, :, :, 1]
             partial_derivatives = _compute_gradient_from_intermediates(
                 x_prime=camera_relative_points[:, :, :, :, 0],
                 y_prime=camera_relative_points[:, :, :, :, 1],
@@ -164,12 +170,17 @@ class SimpleCameraModel(IOptimisableFunction):
             v = v.unsqueeze(1)
             focal_length = self._focal_length[self._gradient_mask]
             focal_length = focal_length.unsqueeze(1)
-            true_projected_points = self._true_projected_points[self._gradient_mask]
+            true_projected_points = self._true_projected_points.unsqueeze(1).tile(
+                1, self.num_estimates, 1, 1, 1
+            )
+            true_projected_points = true_projected_points[self._gradient_mask]
             true_projected_points = true_projected_points.unsqueeze(1)
             world_points = self._world_points[self._gradient_mask]
             world_points = world_points.unsqueeze(1)
             orientation = self._orientation.slice(self._gradient_mask)
-            orientation_gradients = orientation.parameter_gradient(world_points[:, :, None, :, :])
+            orientation_gradients = orientation.parameter_gradient(
+                world_points[:, :, None, :, :]
+            )
             rotation_gradients = orientation.vector_gradient()
             residuals_u = u - true_projected_points[:, :, :, :, 0]
             residuals_v = v - true_projected_points[:, :, :, :, 1]
@@ -227,6 +238,10 @@ class SimpleCameraModel(IOptimisableFunction):
         )
 
     def masked_update(self, other: Self, mask: torch.Tensor) -> Self:
+        if other._true_projected_points is not self._true_projected_points:
+            raise ValueError(
+                f"Can only do masked update between instances targeting the same points"
+            )
         focal_length = torch.where(mask, other._focal_length, self._focal_length)
         cx = torch.where(mask, other._cx, self._cx)
         cy = torch.where(mask, other._cy, self._cy)
@@ -248,17 +263,6 @@ class SimpleCameraModel(IOptimisableFunction):
             world_points = torch.where(
                 world_mask, other._world_points, self._world_points
             )
-        if other._true_projected_points is self._true_projected_points:
-            true_projected_points = self._true_projected_points
-        else:
-            projected_points_mask = mask[:, :, None, None, None].tile(
-                1, 1, *self._true_projected_points.shape[2:]
-            )
-            true_projected_points = torch.where(
-                projected_points_mask,
-                other._true_projected_points,
-                self._true_projected_points,
-            )
         error, error_mask = masked_merge_tensors(
             self._error, self._error_mask, other._error, other._error_mask, mask
         )
@@ -276,7 +280,7 @@ class SimpleCameraModel(IOptimisableFunction):
             translation=translation,
             orientation=orientation,
             world_points=world_points,
-            true_projected_points=true_projected_points,
+            true_projected_points=self._true_projected_points,
             minimum_distance=self.minimum_distance,
             _error=error,
             _error_mask=error_mask,
@@ -289,6 +293,9 @@ class SimpleCameraModel(IOptimisableFunction):
         :returns: 3d points relative to each camera, shape BxExMxNx3
         """
         if self._camera_relative_points is None:
+            # TODO: The first world point should be [0, 0, 0],
+            #       the second [s, 0, 0], and the third [x, y, 0].
+            # world_points = self._world_points
             rotated_points = self._orientation.rotate_vector(
                 self._world_points[:, :, None, :, :]
             )

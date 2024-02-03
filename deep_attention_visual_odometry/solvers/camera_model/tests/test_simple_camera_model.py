@@ -27,6 +27,12 @@ def models_and_mask() -> (
     expected_v = (
         focal_length * camera_relative_point[:, 1] / camera_relative_point[:, 2] + cy
     )
+    true_projected_points = torch.tensor(
+        [
+            [expected_u[0] + 5.0, expected_v[0] - 7.0],
+            [expected_u[1] - 8.0, expected_v[1] + 3.0],
+        ]
+    ).reshape(2, 1, 1, 2)
     camera_model_1 = SimpleCameraModel(
         focal_length=torch.tensor([[focal_length[0]], [focal_length[0]]]),
         cx=torch.tensor([[cx[0]], [cx[0]]]),
@@ -36,12 +42,7 @@ def models_and_mask() -> (
             (axis[0, :] * angle).reshape(1, 1, 1, 1, 3).tile(2, 1, 1, 1, 1)
         ),
         world_points=point[0, :].reshape(1, 1, 1, 3).tile(2, 1, 1, 1),
-        true_projected_points=torch.tensor(
-            [
-                [expected_u[0] + 5.0, expected_v[0] - 7.0],
-                [expected_u[0] - 8.0, expected_v[0] + 3.0],
-            ]
-        ).reshape(2, 1, 1, 1, 2),
+        true_projected_points=true_projected_points,
     )
     camera_model_2 = SimpleCameraModel(
         focal_length=torch.tensor([[focal_length[1]], [focal_length[1]]]),
@@ -52,12 +53,7 @@ def models_and_mask() -> (
             (axis[1, :] * angle).reshape(1, 1, 1, 1, 3).tile(2, 1, 1, 1, 1)
         ),
         world_points=point[1, :].reshape(1, 1, 1, 3).tile(2, 1, 1, 1),
-        true_projected_points=torch.tensor(
-            [
-                [expected_u[1] + 2.1, expected_v[1] + 4.6],
-                [expected_u[1] + 9.0, expected_v[1] + 2.0],
-            ]
-        ).reshape(2, 1, 1, 1, 2),
+        true_projected_points=true_projected_points,
     )
     update_mask = torch.tensor([[False], [True]])
     camera_model_3 = SimpleCameraModel(
@@ -67,12 +63,7 @@ def models_and_mask() -> (
         translation=translation.reshape(2, 1, 1, 3),
         orientation=LieRotation((axis * angle).reshape(2, 1, 1, 1, 3)),
         world_points=point.reshape(2, 1, 1, 3),
-        true_projected_points=torch.tensor(
-            [
-                [expected_u[0] + 5.0, expected_v[0] - 7.0],
-                [expected_u[1] + 9.0, expected_v[1] + 2.0],
-            ]
-        ).reshape(2, 1, 1, 1, 2),
+        true_projected_points=true_projected_points,
     )
     return camera_model_1, camera_model_2, update_mask, camera_model_3
 
@@ -94,10 +85,10 @@ def test_num_parameters_scales_with_num_views_and_num_points():
             list(range(batch_size * num_estimates * num_points * 3))
         ).reshape(batch_size, num_estimates, num_points, 3),
         true_projected_points=torch.tensor(
-            list(range(batch_size * num_estimates * num_views * num_points * 2))
-        ).reshape(batch_size, num_estimates, num_views, num_points, 2),
+            list(range(batch_size * num_views * num_points * 2))
+        ).reshape(batch_size, num_views, num_points, 2),
     )
-    assert camera_model.num_parameters == 3 + 6 * num_views + 3 * num_points
+    assert camera_model.num_parameters == 3 + 6 * num_views + 3 * num_points - 7
 
 
 def test_get_error_return_shape():
@@ -121,8 +112,8 @@ def test_get_error_return_shape():
         .reshape(batch_size, num_estimates, num_points, 3)
         .to(torch.float),
         true_projected_points=torch.tensor(
-            list(range(batch_size * num_estimates * num_views * num_points * 2))
-        ).reshape(batch_size, num_estimates, num_views, num_points, 2),
+            list(range(batch_size * num_views * num_points * 2))
+        ).reshape(batch_size, num_views, num_points, 2),
     )
     error = camera_model.get_error()
     assert error.shape == (batch_size, num_estimates)
@@ -152,7 +143,7 @@ def test_get_error_returns_square_error_between_estimated_and_true_projected_poi
         world_points=point.reshape(1, 1, 1, 3),
         true_projected_points=torch.tensor(
             [expected_u + expected_error_u, expected_v + expected_error_v]
-        ).reshape(1, 1, 1, 1, 2),
+        ).reshape(1, 1, 1, 2),
     )
     error = camera_model.get_error()
     assert error.shape == (1, 1)
@@ -185,7 +176,7 @@ def test_camera_projection_clips_negative_z_to_minimum_distance():
         world_points=point.reshape(1, 1, 1, 3),
         true_projected_points=torch.tensor(
             [expected_u + expected_error_u, expected_v + expected_error_v]
-        ).reshape(1, 1, 1, 1, 2),
+        ).reshape(1, 1, 1, 2),
         minimum_distance=minimum_distance,
     )
     error = camera_model.get_error()
@@ -221,8 +212,8 @@ def test_get_error_caches_returned_tensor():
         .reshape(batch_size, num_estimates, num_points, 3)
         .to(torch.float),
         true_projected_points=torch.tensor(
-            list(range(batch_size * num_estimates * num_views * num_points * 2))
-        ).reshape(batch_size, num_estimates, num_views, num_points, 2),
+            list(range(batch_size * num_views * num_points * 2))
+        ).reshape(batch_size, num_views, num_points, 2),
     )
     error = camera_model.get_error()
     error2 = camera_model.get_error()
@@ -318,8 +309,8 @@ def test_get_gradient_return_shape():
         .reshape(batch_size, num_estimates, num_points, 3)
         .to(torch.float),
         true_projected_points=torch.tensor(
-            list(range(batch_size * num_estimates * num_views * num_points * 2))
-        ).reshape(batch_size, num_estimates, num_views, num_points, 2),
+            list(range(batch_size * num_views * num_points * 2))
+        ).reshape(batch_size, num_views, num_points, 2),
     )
     gradient = camera_model.get_gradient()
     assert gradient.shape == (batch_size, num_estimates, camera_model.num_parameters)
@@ -346,7 +337,7 @@ def test_gradient_is_zero_for_correct_estimate():
         orientation=LieRotation(angle * axis.reshape(1, 1, 1, 1, 3)),
         world_points=point.reshape(1, 1, 1, 3),
         true_projected_points=torch.tensor([expected_u, expected_v]).reshape(
-            1, 1, 1, 1, 2
+            1, 1, 1, 2
         ),
     )
     gradient = camera_model.get_gradient()
@@ -400,7 +391,7 @@ def test_cx_gradient_is_high_if_incorrect():
         world_points=points.reshape(1, 1, num_points, 3),
         true_projected_points=torch.cat(
             [expected_u[:, :, None], expected_v[:, :, None]], dim=2
-        ).reshape(1, 1, num_views, num_points, 2),
+        ).reshape(1, num_views, num_points, 2),
     )
     gradient = camera_model.get_gradient()
     assert gradient.shape == (1, 1, 3 + 6 * num_views + 3 * num_points)
@@ -453,7 +444,7 @@ def test_cy_gradient_is_high_if_incorrect():
         world_points=points.reshape(1, 1, num_points, 3),
         true_projected_points=torch.cat(
             [expected_u[:, :, None], expected_v[:, :, None]], dim=2
-        ).reshape(1, 1, num_views, num_points, 2),
+        ).reshape(1, num_views, num_points, 2),
     )
     gradient = camera_model.get_gradient()
     assert gradient.shape == (1, 1, 3 + 6 * num_views + 3 * num_points)
@@ -510,7 +501,7 @@ def test_fx_gradient_is_high_if_incorrect():
         world_points=points.reshape(1, 1, num_points, 3),
         true_projected_points=torch.cat(
             [expected_u[:, :, None], expected_v[:, :, None]], dim=2
-        ).reshape(1, 1, num_views, num_points, 2),
+        ).reshape(1, num_views, num_points, 2),
     )
     gradient = camera_model.get_gradient()
     assert gradient.shape == (1, 1, 3 + 6 * num_views + 3 * num_points)
@@ -574,7 +565,7 @@ def test_orientation_x_gradient_is_high_if_incorrect():
         world_points=points.reshape(1, 1, num_points, 3),
         true_projected_points=torch.cat(
             [expected_u[:, :, None], expected_v[:, :, None]], dim=2
-        ).reshape(1, 1, num_views, num_points, 2),
+        ).reshape(1, num_views, num_points, 2),
     )
     gradient = camera_model.get_gradient()
     assert gradient.shape == (1, 1, 3 + 6 * num_views + 3 * num_points)
@@ -608,10 +599,8 @@ def test_tensor_gradient_passes_from_error_to_inputs():
         .requires_grad_()
     )
     true_projected_points = (
-        torch.tensor(
-            list(range(batch_size * num_estimates * num_views * num_points * 2))
-        )
-        .reshape(batch_size, num_estimates, num_views, num_points, 2)
+        torch.tensor(list(range(batch_size * num_views * num_points * 2)))
+        .reshape(batch_size, num_views, num_points, 2)
         .to(torch.float)
         .requires_grad_()
     )
@@ -672,10 +661,8 @@ def test_tensor_gradient_passes_from_gradient_to_inputs():
         .requires_grad_()
     )
     true_projected_points = (
-        torch.tensor(
-            list(range(batch_size * num_estimates * num_views * num_points * 2))
-        )
-        .reshape(batch_size, num_estimates, num_views, num_points, 2)
+        torch.tensor(list(range(batch_size * num_views * num_points * 2)))
+        .reshape(batch_size, num_views, num_points, 2)
         .to(torch.float)
         .requires_grad_()
     )
