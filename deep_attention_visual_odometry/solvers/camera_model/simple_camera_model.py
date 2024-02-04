@@ -137,8 +137,9 @@ class SimpleCameraModel(IOptimisableFunction):
     def get_gradient(self) -> torch.Tensor:
         """Get the gradient for each estimate, BxExP"""
         if self._gradient is None:
+            world_points = self._get_world_points()
             orientation_gradients = self._orientation.parameter_gradient(
-                self._world_points[:, :, None, :, :]
+                world_points[:, :, None, :, :]
             )
             rotation_gradients = self._orientation.vector_gradient()
             camera_relative_points = self._get_camera_relative_points()
@@ -175,7 +176,8 @@ class SimpleCameraModel(IOptimisableFunction):
             )
             true_projected_points = true_projected_points[self._gradient_mask]
             true_projected_points = true_projected_points.unsqueeze(1)
-            world_points = self._world_points[self._gradient_mask]
+            world_points = self._get_world_points()
+            world_points = world_points[self._gradient_mask]
             world_points = world_points.unsqueeze(1)
             orientation = self._orientation.slice(self._gradient_mask)
             orientation_gradients = orientation.parameter_gradient(
@@ -208,9 +210,9 @@ class SimpleCameraModel(IOptimisableFunction):
         ty_idx = tx_idx + self._num_views
         tz_idx = ty_idx + self._num_views
         x_idx = tz_idx + self._num_views
-        y_idx = x_idx + self._num_points
-        z_idx = y_idx + self._num_points
-        end_idx = z_idx + self._num_points
+        y_idx = x_idx + self._num_points - 2
+        z_idx = y_idx + self._num_points - 2
+        end_idx = z_idx + self._num_points - 3
         a_params = parameters[:, :, a_idx:b_idx]
         b_params = parameters[:, :, b_idx:c_idx]
         c_params = parameters[:, :, c_idx:tx_idx]
@@ -222,6 +224,7 @@ class SimpleCameraModel(IOptimisableFunction):
         z_params = parameters[:, :, z_idx:end_idx]
 
         t_params = torch.stack([tx_params, ty_params, tz_params], dim=-1)
+        z_params = torch.cat([torch.zeros_like(z_params[:, :, 0:1]), z_params], dim=-1)
         point_params = torch.stack([x_params, y_params, z_params], dim=-1)
         new_orientation = self._orientation.add_lie_parameters(
             torch.stack([a_params, b_params, c_params], dim=-1).unsqueeze(-2)
@@ -288,16 +291,44 @@ class SimpleCameraModel(IOptimisableFunction):
             _gradient_mask=gradient_mask,
         )
 
+    def _get_world_points(self) -> torch.Tensor:
+        """
+        Get the world points, augmented with two additional points.
+        We constrain the world points, such that the first point is [0,0,0],
+        the second point is [1, 0, 0] (defining the x axis), and the third point is [x, y, 0],
+        (defining the xy plane).
+        :return:
+        """
+        first_two_points = torch.zeros(
+            self.batch_size,
+            self.num_estimates,
+            2,
+            3,
+            device=self._world_points.device,
+            dtype=self._world_points.dtype,
+        )
+        first_two_points[:, :, 1, 0] = 1.0
+        third_point = torch.cat(
+            [
+                self._world_points[:, :, 0:1, 0:2],
+                torch.zeros_like(self._world_points[:, :, 0:1, 2:3]),
+            ],
+            dim=-1,
+        )
+        world_points = torch.cat(
+            [first_two_points, third_point, self._world_points[:, :, 1:, :]], dim=2
+        )
+        return world_points
+
     def _get_camera_relative_points(self) -> torch.Tensor:
         """
         :returns: 3d points relative to each camera, shape BxExMxNx3
         """
         if self._camera_relative_points is None:
-            # TODO: The first world point should be [0, 0, 0],
-            #       the second [s, 0, 0], and the third [x, y, 0].
-            # world_points = self._world_points
+            world_points = self._get_world_points()
+            # Rotate the points by the camera rotations.
             rotated_points = self._orientation.rotate_vector(
-                self._world_points[:, :, None, :, :]
+                world_points[:, :, None, :, :]
             )
             rotated_points = rotated_points + self._translation[:, :, :, None, :]
             # Clamp the camera-relative z' to treat all points as "in front" of the camera,
@@ -512,16 +543,20 @@ def _stack_gradients(
         residuals_v * partial_derivatives.partial_dv_dtz
     ).sum(dim=-1)
     # Compute world point gradients, summed over all views
-    world_x_gradients = (residuals_u * partial_derivatives.partial_du_dx).sum(
+    world_x_gradients = (
+        residuals_u[:, :, :, 2:] * partial_derivatives.partial_du_dx[:, :, :, 2:]
+    ).sum(dim=-2) + (
+        residuals_v[:, :, :, 2:] * partial_derivatives.partial_dv_dx[:, :, :, 2:]
+    ).sum(
         dim=-2
-    ) + (residuals_v * partial_derivatives.partial_dv_dx).sum(dim=-2)
+    )
     world_y_gradients = (
-        residuals_u * partial_derivatives.partial_du_dy
-        + residuals_v * partial_derivatives.partial_dv_dy
+        residuals_u[:, :, :, 2:] * partial_derivatives.partial_du_dy[:, :, :, 2:]
+        + residuals_v[:, :, :, 2:] * partial_derivatives.partial_dv_dy[:, :, :, 2:]
     ).sum(dim=-2)
     world_z_gradients = (
-        residuals_u * partial_derivatives.partial_du_dz
-        + residuals_v * partial_derivatives.partial_dv_dz
+        residuals_u[:, :, :, 3:] * partial_derivatives.partial_du_dz[:, :, :, 3:]
+        + residuals_v[:, :, :, 3:] * partial_derivatives.partial_dv_dz[:, :, :, 3:]
     ).sum(dim=-2)
     return torch.cat(
         [
