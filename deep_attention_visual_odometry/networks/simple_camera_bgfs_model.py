@@ -23,7 +23,6 @@ class SimpleCameraBGFSModel(nn.Module):
         curvature: float,
     ):
         super().__init__()
-        num_parameters = 3 + 6 * num_views + 3 * num_points
         self.initial_guess = SimpleCameraModelInitialGuess(num_views, num_points)
         self.line_search = LineSearchStrongWolfeConditions(
             max_step_size=max_step_size,
@@ -33,15 +32,13 @@ class SimpleCameraBGFSModel(nn.Module):
         )
         self.solver = BFGSCameraSolver(
             max_iterations=max_iterations,
-            num_parameters=num_parameters,
             epsilon=epsilon,
+            max_step_distance=1e3,
             line_search=self.line_search,
         )
 
-    def forward(
-        self, projected_points: torch.Tensor
-    ) -> SimpleCameraModel:
-        projected_points = projected_points.unsqueeze(1)
+    def forward(self, projected_points: torch.Tensor) -> SimpleCameraModel:
+        # projected_points = projected_points.unsqueeze(1)
         initial_guess = self.initial_guess(projected_points)
         solution = self.solver(initial_guess)
         return solution

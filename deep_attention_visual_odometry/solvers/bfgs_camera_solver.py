@@ -1,10 +1,6 @@
-import math
-from typing import Iterable, NamedTuple
 import torch
 import torch.nn as nn
-import torch.nn.functional as fn
 from .i_optimisable_function import IOptimisableFunction
-from .least_squares_utils import find_residuals, find_error, find_error_gradient
 
 
 class BFGSCameraSolver(nn.Module):
@@ -23,18 +19,16 @@ class BFGSCameraSolver(nn.Module):
 
     def __init__(
         self,
-        num_parameters: int,
         max_iterations: int,
         epsilon: float,
+        max_step_distance: float,
         line_search: nn.Module,
     ):
         super().__init__()
         self.line_search = line_search
         self.max_iterations = int(max_iterations)
         self.epsilon = torch.tensor(float(epsilon))
-
-        # Initial values of the inverse hessian
-        self.inv_hessian = nn.Parameter(torch.eye(num_parameters))
+        self.max_step_distance = float(max_step_distance)
 
     def forward(
         self,
@@ -49,7 +43,7 @@ class BFGSCameraSolver(nn.Module):
         num_estimates = function.num_estimates
 
         # Initialise the inverse hessian
-        inverse_hessian = self.inv_hessian.tile(batch_size, num_estimates, 1, 1)
+        inverse_hessian: torch.Tensor = torch.tensor([])
 
         # TODO: Use updating as a mask to reduce computation
         updating = torch.ones(
@@ -65,6 +59,9 @@ class BFGSCameraSolver(nn.Module):
                     inverse_hessian, gradient.unsqueeze(-1)
                 )
                 search_direction = search_direction.squeeze(-1)
+            # Clamp the search direction. In practice, sometimes there are extreme gradients,
+            # And if the inverse hessian is not sufficiently converged yet, we may end up stepping much too far
+            search_direction = clamp_search_direction(search_direction, self.max_step_distance)
             # Line search for an update step that satisfies the wolfe conditions
             next_function_point, step = self.line_search(function, search_direction)
             # Update the inverse hessian based on the next chosen point
@@ -85,6 +82,18 @@ class BFGSCameraSolver(nn.Module):
                 updating, torch.greater(function.get_error(), self.epsilon)
             )
         return function
+
+
+def clamp_search_direction(search_direction: torch.Tensor, max_step_length: float) -> torch.Tensor:
+    """
+    Make sure the search direction is not too large.
+    """
+    largest_step = search_direction.max(dim=-1).values
+    is_too_large = (largest_step > max_step_length)
+    scale = torch.where(is_too_large, max_step_length / largest_step, torch.ones_like(largest_step))
+    scale = scale.clamp(min=1e-16)
+    search_direction = scale[:, :, None] * search_direction
+    return search_direction
 
 
 def estimate_initial_inverse_hessian(
