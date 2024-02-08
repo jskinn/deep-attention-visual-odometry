@@ -28,10 +28,10 @@ class CameraOptmisationTrainingModule(LightningModule):
     ):
         predictions = self.network(batch.projected_points)
         focal_length_loss = self.loss_fn(
-            predictions.focal_length, batch.camera_intrinsics[:, :, 0, 0]
+            predictions.focal_length, batch.camera_intrinsics[:, 0:1, 0]
         )
-        cx_loss = self.loss_fn(predictions.cx, batch.camera_intrinsics[:, :, 2, 0])
-        cy_loss = self.loss_fn(predictions.cy, batch.camera_intrinsics[:, :, 2, 0])
+        cx_loss = self.loss_fn(predictions.cx, batch.camera_intrinsics[:, 2:3, 0])
+        cy_loss = self.loss_fn(predictions.cy, batch.camera_intrinsics[:, 2:3, 1])
         self.log(f"{step_name} focal length loss", focal_length_loss)
         self.log(f"{step_name} cx loss", cx_loss)
         self.log(f"{step_name} cy loss", cy_loss)
