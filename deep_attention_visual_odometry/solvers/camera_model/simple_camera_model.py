@@ -39,6 +39,7 @@ class SimpleCameraModel(IOptimisableFunction):
         world_points: torch.Tensor,
         true_projected_points: torch.Tensor,
         minimum_distance: float = 1e-5,
+        maximum_pixel_ratio: float = 1e3,
         _error: torch.Tensor | None = None,
         _gradient: torch.Tensor | None = None,
         _error_mask: torch.Tensor | None = None,
@@ -53,11 +54,17 @@ class SimpleCameraModel(IOptimisableFunction):
         :param world_points: BxExNx3 (fixed for all views)
         :param true_projected_points: BxMxNx2
         :param minimum_distance: Minimum distance from the camera plane
+        :param maximum_pixel_ratio: The maximum ratio for x/z and y/z.
+        Since we expect the image coordinates to range [-1, 1], constraining this keeps the error sane.
         """
         self.minimum_distance = float(minimum_distance)
+        self.maximum_pixel_ratio = 1.0 / abs(float(maximum_pixel_ratio))
         self._num_views = true_projected_points.size(1)
         self._num_points = true_projected_points.size(2)
         self._num_estimates = focal_length.size(1)
+        self._error_scale = torch.tensor(
+            1.0 / (self._num_views * self._num_points)
+        ).sqrt()
         self._focal_length = focal_length
         self._cx = cx
         self._cy = cy
@@ -110,10 +117,12 @@ class SimpleCameraModel(IOptimisableFunction):
             u = self._get_u()
             v = self._get_v()
             self._error = (
-                u - self._true_projected_points[:, None, :, :, 0]
-            ).square().sum(dim=(-2, -1)) + (
-                v - self._true_projected_points[:, None, :, :, 1]
-            ).square().sum(
+                self._error_scale
+                * (u - self._true_projected_points[:, None, :, :, 0]).square()
+            ).sum(dim=(-2, -1)) + (
+                self._error_scale
+                * (v - self._true_projected_points[:, None, :, :, 1]).square()
+            ).sum(
                 dim=(-2, -1)
             )
             self._error_mask = None
@@ -127,9 +136,13 @@ class SimpleCameraModel(IOptimisableFunction):
                 1, self.num_estimates, 1, 1, 1
             )
             true_projected_points = true_projected_points[to_update]
-            new_error = (u - true_projected_points[:, :, :, 0]).square().sum(
+            new_error = (
+                self._error_scale * (u - true_projected_points[:, :, :, 0]).square()
+            ).sum(dim=(-2, -1)) + (
+                self._error_scale * (v - true_projected_points[:, :, :, 1]).square()
+            ).sum(
                 dim=(-2, -1)
-            ) + (v - true_projected_points[:, :, :, 1]).square().sum(dim=(-2, -1))
+            )
             self._error = self._error.masked_scatter(to_update, new_error)
             self._error_mask = None
         return self._error
@@ -145,8 +158,16 @@ class SimpleCameraModel(IOptimisableFunction):
             camera_relative_points = self._get_camera_relative_points()
             u = self._get_u()
             v = self._get_v()
-            residuals_u = u - self._true_projected_points[:, None, :, :, 0]
-            residuals_v = v - self._true_projected_points[:, None, :, :, 1]
+            residuals_u = (
+                2.0
+                * self._error_scale
+                * (u - self._true_projected_points[:, None, :, :, 0])
+            )
+            residuals_v = (
+                2.0
+                * self._error_scale
+                * (v - self._true_projected_points[:, None, :, :, 1])
+            )
             partial_derivatives = _compute_gradient_from_intermediates(
                 x_prime=camera_relative_points[:, :, :, :, 0],
                 y_prime=camera_relative_points[:, :, :, :, 1],
@@ -184,8 +205,12 @@ class SimpleCameraModel(IOptimisableFunction):
                 world_points[:, :, None, :, :]
             )
             rotation_gradients = orientation.vector_gradient()
-            residuals_u = u - true_projected_points[:, :, :, :, 0]
-            residuals_v = v - true_projected_points[:, :, :, :, 1]
+            residuals_u = (
+                2.0 * self._error_scale * (u - true_projected_points[:, :, :, :, 0])
+            )
+            residuals_v = (
+                2.0 * self._error_scale * (v - true_projected_points[:, :, :, :, 1])
+            )
             partial_derivatives = _compute_gradient_from_intermediates(
                 x_prime=camera_relative_points[:, :, :, :, 0],
                 y_prime=camera_relative_points[:, :, :, :, 1],
@@ -335,12 +360,17 @@ class SimpleCameraModel(IOptimisableFunction):
             # Due to the division, the optmisation cannot cross through Z' = 0,
             # because the projected points go to infinity, and thus so does the error.
             # It is a relatively safe assumption that any point we can see, is in front of the camera.
+            min_z = (
+                (self.maximum_pixel_ratio * rotated_points[:, :, :, :, 0:2])
+                .abs()
+                .max(dim=-1)
+                .values
+            )
+            min_z = torch.clamp(min_z, min=self.minimum_distance)
             rotated_points = torch.cat(
                 [
                     rotated_points[:, :, :, :, 0:2],
-                    torch.clamp(
-                        rotated_points[:, :, :, :, 2:3], min=self.minimum_distance
-                    ),
+                    torch.maximum(rotated_points[:, :, :, :, 2:3], min_z.unsqueeze(-1)),
                 ],
                 dim=-1,
             )
