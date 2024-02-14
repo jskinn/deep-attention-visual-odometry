@@ -37,7 +37,7 @@ class SinXonX(torch.autograd.Function):
             return None
         (x,) = ctx.saved_tensors
         if ctx.needs_input_grad[0]:
-            return x * cos_x_on_x_squared_minus_sin_x_on_x_cubed(x)
+            return grad_output * x * cos_x_on_x_squared_minus_sin_x_on_x_cubed(x)
         return None
 
 
@@ -104,4 +104,5 @@ def sin_x_on_x(x: torch.Tensor) -> torch.Tensor:
 
 
 def cos_x_on_x_squared_minus_sin_x_on_x_cubed(x: torch.Tensor) -> torch.Tensor:
-    return CosXonXSquaredMinusSinXonXCubed.apply(x)
+    result, _ = CosXonXSquaredMinusSinXonXCubed.apply(x)
+    return result
