@@ -10,7 +10,7 @@ def test_output_is_same_shape_as_input():
 
 
 def test_is_half_at_zero():
-    inputs = torch.linspace(-0.1, 0.1, 5)
+    inputs = torch.linspace(-0.01, 0.01, 5)
     results = one_minus_cos_x_on_x_squared(inputs)
     assert results[2] == 0.5
     assert torch.all(results[[0, 1, 3, 4]] < 0.5)

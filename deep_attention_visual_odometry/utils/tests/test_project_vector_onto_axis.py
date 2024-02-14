@@ -1,12 +1,13 @@
 import torch
 from torch.autograd import gradcheck
-from deep_attention_visual_odometry.utils import normalised_dot_product
+from deep_attention_visual_odometry.utils import project_vector_onto_axis
 
 
-def test_output_is_same_shape_as_input():
-    inputs = torch.randn(5, 1, 2, 3)
-    results = normalised_dot_product(inputs)
-    assert results.shape == (5, 1, 2, 3)
+def test_output_flattens_final_dimension():
+    input_1 = torch.randn(5, 1, 2, 3)
+    input_2 = torch.randn(5, 1, 2, 3)
+    results = project_vector_onto_axis(input_1, input_2)
+    assert results.shape == (5, 1, 2, 1)
 
 
 def test_is_one_at_zero():

@@ -12,7 +12,7 @@ def test_output_is_same_shape_as_input():
 
 
 def test_is_half_at_zero():
-    inputs = torch.linspace(-0.1, 0.1, 5)
+    inputs = torch.linspace(-0.01, 0.01, 5)
     results = cos_x_on_x_squared_minus_sin_x_on_x_cubed(inputs)
     assert results[2] == -1.0 / 3.0
     assert torch.all(results[[0, 1, 3, 4]] > -1.0 / 3.0)
@@ -42,8 +42,24 @@ def test_computes_gradients_when_input_is_zero():
     assert torch.all(torch.greater_equal(torch.abs(inputs.grad), 0))
 
 
-def test_gradcheck():
+def test_gradcheck_large():
     inputs = torch.pi * torch.randn(100, dtype=torch.double, requires_grad=True)
+    assert gradcheck(
+        cos_x_on_x_squared_minus_sin_x_on_x_cubed, inputs, eps=1e-6, atol=1e-4
+    )
+
+
+def test_gradcheck_small():
+    inputs = 0.005 * torch.randn(100, dtype=torch.double, requires_grad=True)
+    assert gradcheck(
+        cos_x_on_x_squared_minus_sin_x_on_x_cubed, inputs, eps=1e-6, atol=1e-4
+    )
+
+
+def test_gradcheck_near_transitions():
+    inputs = 0.005 * torch.randn(
+        100, dtype=torch.double, requires_grad=True
+    ) + torch.cat([0.01 * torch.ones(50), -0.01 * torch.ones(50)])
     assert gradcheck(
         cos_x_on_x_squared_minus_sin_x_on_x_cubed, inputs, eps=1e-6, atol=1e-4
     )
