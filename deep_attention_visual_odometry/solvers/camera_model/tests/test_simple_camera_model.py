@@ -689,18 +689,22 @@ def test_tensor_gradient_passes_from_error_to_inputs():
     loss = error.square().sum()
     loss.backward()
     assert focal_length.grad is not None
-    assert torch.all(torch.greater(torch.abs(focal_length.grad), 0))
-    assert focal_length.grad is not None
+    assert torch.all(torch.isfinite(focal_length.grad))
     assert torch.all(torch.greater(torch.abs(focal_length.grad), 0))
     assert cx.grad is not None
+    assert torch.all(torch.isfinite(cx.grad))
     assert torch.all(torch.greater(torch.abs(cx.grad), 0))
     assert cy.grad is not None
+    assert torch.all(torch.isfinite(cy.grad))
     assert torch.all(torch.greater(torch.abs(cy.grad), 0))
     assert translation.grad is not None
+    assert torch.all(torch.isfinite(translation.grad))
     assert torch.all(torch.greater(torch.abs(translation.grad), 0))
     assert orientation.grad is not None
+    assert torch.all(torch.isfinite(orientation.grad))
     assert torch.all(torch.greater(torch.abs(orientation.grad), 0))
     assert world_points.grad is not None
+    assert torch.all(torch.isfinite(world_points.grad))
     assert torch.all(torch.greater(torch.abs(true_projected_points.grad), 0))
 
 
@@ -751,18 +755,22 @@ def test_tensor_gradient_passes_from_gradient_to_inputs():
     loss = gradient.square().sum()
     loss.backward()
     assert focal_length.grad is not None
-    assert torch.all(torch.greater(torch.abs(focal_length.grad), 0))
-    assert focal_length.grad is not None
+    assert torch.all(torch.isfinite(focal_length.grad))
     assert torch.all(torch.greater(torch.abs(focal_length.grad), 0))
     assert cx.grad is not None
+    assert torch.all(torch.isfinite(cx.grad))
     assert torch.all(torch.greater(torch.abs(cx.grad), 0))
     assert cy.grad is not None
+    assert torch.all(torch.isfinite(cy.grad))
     assert torch.all(torch.greater(torch.abs(cy.grad), 0))
     assert translation.grad is not None
+    assert torch.all(torch.isfinite(translation.grad))
     assert torch.all(torch.greater(torch.abs(translation.grad), 0))
     assert orientation.grad is not None
+    assert torch.all(torch.isfinite(orientation.grad))
     assert torch.all(torch.greater(torch.abs(orientation.grad), 0))
     assert world_points.grad is not None
+    assert torch.all(torch.isfinite(world_points.grad))
     assert torch.all(torch.greater(torch.abs(true_projected_points.grad), 0))
 
 
