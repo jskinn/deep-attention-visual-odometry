@@ -1,5 +1,6 @@
 from typing import Self
 import torch
+from deep_attention_visual_odometry.utils import sin_x_on_x, one_minus_cos_x_on_x_squared, cos_x_on_x_squared_minus_sin_x_on_x_cubed
 
 
 class LieRotation:
@@ -29,10 +30,7 @@ class LieRotation:
         gamma = torch.where(is_angle_zero, torch.zeros_like(gamma), gamma)
         cos_theta = torch.cos(angle)
         # Lim x->0 sin(x)/x = 1.0
-        sin_theta_on_theta = torch.sin(angle) / angle
-        sin_theta_on_theta = torch.where(
-            is_angle_zero, torch.ones_like(sin_theta_on_theta), sin_theta_on_theta
-        )
+        sin_theta_on_theta = sin_x_on_x(angle)
         # Compute the sin coefficients for each output.
         sin_coefficients = torch.linalg.cross(self._lie_vector, vector, dim=-1)
         gamma_axis = self._lie_vector * gamma
@@ -62,10 +60,7 @@ class LieRotation:
         ) / angle_squared
         gamma = torch.where(is_angle_zero, torch.zeros_like(gamma), gamma)
         cos_theta = torch.cos(angle)
-        sin_theta_on_theta = torch.sin(angle) / angle
-        sin_theta_on_theta = torch.where(
-            is_angle_zero, torch.ones_like(sin_theta_on_theta), sin_theta_on_theta
-        )
+        sin_theta_on_theta = sin_x_on_x(angle)
         one_minus_cos_theta = 1.0 - cos_theta
         cross_product = torch.linalg.cross(self._lie_vector, vector, dim=-1)
 
@@ -88,12 +83,9 @@ class LieRotation:
         # Term 2: e ((e \gamma - v) \sin{theta}/theta + (e x v)(cos(theta) / theta^2 - sin(theta) / theta^3))
         dot_diff = self._lie_vector * gamma.squeeze(-1) - vector
         dot_diff = dot_diff * sin_theta_on_theta.squeeze(-1)
-        trig_diff = cos_theta / angle_squared - sin_theta_on_theta / angle_squared
-        trig_diff = torch.where(
-            is_angle_zero, -1.0 / 3.0 * torch.ones_like(trig_diff), trig_diff
-        )
-        trig_diff = trig_diff.squeeze(-1) * cross_product
-        term_2 = dot_diff + trig_diff
+        cross_diff = cos_x_on_x_squared_minus_sin_x_on_x_cubed(angle)
+        cross_diff = cross_diff.squeeze(-1) * cross_product
+        term_2 = dot_diff + cross_diff
         term_2 = term_2.unsqueeze(-1) * self._lie_vector.unsqueeze(-2)
 
         # Term 3: derivatives from the cross product
@@ -123,21 +115,12 @@ class LieRotation:
     def vector_gradient(self) -> torch.Tensor:
         angle_squared = self._lie_vector.square().sum(dim=-1, keepdims=True)
         angle = angle_squared.sqrt()
-        is_angle_zero = angle == 0
-        cos_theta = torch.cos(angle)
-        sin_theta_on_theta = torch.sin(angle) / angle
-        sin_theta_on_theta = torch.where(
-            is_angle_zero, torch.ones_like(sin_theta_on_theta), sin_theta_on_theta
-        )
-        one_minus_cos_theta = 1.0 - cos_theta
-        one_minus_cos_theta = one_minus_cos_theta / angle_squared
-        one_minus_cos_theta = torch.where(
-            is_angle_zero,
-            0.5 * torch.ones_like(one_minus_cos_theta),
-            one_minus_cos_theta,
-        )
+
+        # Gradient is
+        sin_theta_on_theta = sin_x_on_x(angle)
+        cos_term = one_minus_cos_x_on_x_squared(angle)
         outer_product = self._lie_vector.unsqueeze(-2) * self._lie_vector.unsqueeze(-1)
-        outer_product = outer_product * one_minus_cos_theta.unsqueeze(-1)
+        outer_product = outer_product * cos_term.unsqueeze(-1)
 
         a = torch.index_select(
             self._lie_vector,
