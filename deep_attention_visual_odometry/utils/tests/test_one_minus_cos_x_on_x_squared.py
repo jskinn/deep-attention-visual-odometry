@@ -10,10 +10,12 @@ def test_output_is_same_shape_as_input():
 
 
 def test_is_half_at_zero():
-    inputs = torch.linspace(-0.01, 0.01, 5)
+    num_steps = 101
+    zero_idx = (num_steps - 1) // 2
+    inputs = torch.linspace(-0.1, 0.1, num_steps)
     results = one_minus_cos_x_on_x_squared(inputs)
-    assert results[2] == 0.5
-    assert torch.all(results[[0, 1, 3, 4]] < 0.5)
+    assert results[zero_idx] == 0.5
+    assert torch.all(results[[idx for idx in range(num_steps) if idx != zero_idx]] < 0.5)
 
 
 def test_computes_gradients():
@@ -40,8 +42,20 @@ def test_computes_gradients_when_input_is_zero():
     assert torch.all(torch.greater_equal(torch.abs(inputs.grad), 0))
 
 
-def test_gradcheck():
+def test_gradcheck_large():
     inputs = torch.pi * torch.randn(100, dtype=torch.double, requires_grad=True)
+    assert gradcheck(one_minus_cos_x_on_x_squared, inputs, eps=1e-6, atol=1e-4)
+
+
+def test_gradcheck_small():
+    inputs = 0.005 * torch.randn(100, dtype=torch.double, requires_grad=True)
+    assert gradcheck(one_minus_cos_x_on_x_squared, inputs, eps=1e-6, atol=1e-4)
+
+
+def test_gradcheck_near_transitions():
+    inputs = 0.005 * torch.randn(
+        100, dtype=torch.double, requires_grad=True
+    ) + torch.cat([0.01 * torch.ones(50), -0.01 * torch.ones(50)])
     assert gradcheck(one_minus_cos_x_on_x_squared, inputs, eps=1e-6, atol=1e-4)
 
 

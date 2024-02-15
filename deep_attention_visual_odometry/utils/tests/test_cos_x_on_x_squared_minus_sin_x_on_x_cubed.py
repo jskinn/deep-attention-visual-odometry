@@ -11,7 +11,7 @@ def test_output_is_same_shape_as_input():
     assert results.shape == (5, 1, 2, 3)
 
 
-def test_is_half_at_zero():
+def test_is_minus_one_third_at_zero():
     inputs = torch.linspace(-0.01, 0.01, 5)
     results = cos_x_on_x_squared_minus_sin_x_on_x_cubed(inputs)
     assert results[2] == -1.0 / 3.0
