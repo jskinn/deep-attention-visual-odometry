@@ -4,51 +4,214 @@ from deep_attention_visual_odometry.utils import project_vector_onto_axis
 
 
 def test_output_flattens_final_dimension():
-    input_1 = torch.randn(5, 1, 2, 3)
-    input_2 = torch.randn(5, 1, 2, 3)
-    results = project_vector_onto_axis(input_1, input_2)
+    vector = torch.randn(5, 1, 2, 3)
+    axis = torch.randn(5, 1, 2, 3)
+    results = project_vector_onto_axis(vector, axis)
     assert results.shape == (5, 1, 2, 1)
 
 
-def test_is_one_at_zero():
-    inputs = torch.linspace(-0.01, 0.01, 5)
-    results = normalised_dot_product(inputs)
-    assert results[2] == 1.0
-    assert torch.all(results[[0, 1, 3, 4]] < 1.0)
+def test_is_zero_if_axis_is_zero():
+    vector = torch.tensor([1.0, -2.3, 4.0])
+    axis = torch.zeros(3)
+    results = project_vector_onto_axis(vector, axis)
+    assert results[0] == 0.0
 
 
-def test_computes_gradients():
-    inputs = (torch.pi * torch.randn(10, dtype=torch.double)).requires_grad_()
-    results = normalised_dot_product(inputs)
+def test_result_times_axis_is_vector_if_vector_and_axis_are_parallel():
+    vector = torch.randn(5, 3)
+    axis = torch.randn(5, 1) * vector
+    results = project_vector_onto_axis(vector, axis)
+    reprojected_vector = results * axis
+    assert torch.all(torch.isclose(reprojected_vector, vector))
+
+
+def test_result_times_axis_is_vector_if_vector_and_axis_are_parallel_in_high_dimensions():
+    vector = torch.randn(5, 18)
+    axis = torch.randn(5, 1) * vector
+    results = project_vector_onto_axis(vector, axis)
+    reprojected_vector = results * axis
+    assert torch.all(torch.isclose(reprojected_vector, vector))
+
+
+def test_is_zero_if_vector_and_axis_are_purpendicular():
+    vector = torch.randn(5, 3)
+    other_vector = torch.randn(5, 3)
+    axis = torch.cross(vector, other_vector)
+    results = project_vector_onto_axis(vector, axis)
+    assert torch.all(results.abs() < 1e-7)
+
+
+def test_product_of_results_and_axis_is_constant():
+    vector = torch.randn(5, 3)
+    axis1 = torch.randn(5, 3)
+    axis2 = torch.randn(5, 1) * axis1
+    results1 = project_vector_onto_axis(vector, axis1)
+    results2 = project_vector_onto_axis(vector, axis2)
+    product1 = axis1 * results1
+    product2 = axis2 * results2
+    assert torch.all(torch.isclose(product1, product2))
+
+
+def test_product_of_results_and_axis_is_constant_for_many_dimensions():
+    vector = torch.randn(5, 17)
+    axis1 = torch.randn(5, 17)
+    axis2 = torch.randn(5, 1) * axis1
+    results1 = project_vector_onto_axis(vector, axis1)
+    results2 = project_vector_onto_axis(vector, axis2)
+    product1 = axis1 * results1
+    product2 = axis2 * results2
+    assert torch.all(torch.isclose(product1, product2))
+
+
+def test_passing_in_the_square_axis_length_doesnt_change_results():
+    vector = torch.randn(5, 3)
+    axis = torch.randn(5, 3)
+    square_length = axis.square().sum(dim=-1, keepdims=True)
+    results1 = project_vector_onto_axis(vector, axis)
+    results2 = project_vector_onto_axis(vector, axis, square_length)
+    assert torch.equal(results1, results2)
+
+
+def test_computes_gradients_for_vector():
+    vector = torch.randn(5, 3).requires_grad_()
+    axis = torch.randn(5, 3)
+    results = project_vector_onto_axis(vector, axis)
     assert results.requires_grad is True
     assert results.grad_fn is not None
     loss = results.square().sum()
     loss.backward()
-    assert inputs.grad is not None
-    assert torch.all(torch.isfinite(inputs.grad))
-    assert torch.all(torch.greater(torch.abs(inputs.grad), 0))
+    assert vector.grad is not None
+    assert torch.all(torch.isfinite(vector.grad))
+    assert torch.all(torch.greater(torch.abs(vector.grad), 0))
 
 
-def test_computes_gradients_when_input_is_zero():
-    inputs = torch.linspace(-0.01, 0.01, 5, requires_grad=True)
-    results = normalised_dot_product(inputs)
+def test_computes_gradients_for_axis():
+    vector = torch.randn(5, 3)
+    axis = torch.randn(5, 3).requires_grad_()
+    results = project_vector_onto_axis(vector, axis)
     assert results.requires_grad is True
     assert results.grad_fn is not None
     loss = results.square().sum()
     loss.backward()
-    assert inputs.grad is not None
-    assert torch.all(torch.isfinite(inputs.grad))
-    assert torch.all(torch.greater_equal(torch.abs(inputs.grad), 0))
+    assert axis.grad is not None
+    assert torch.all(torch.isfinite(axis.grad))
+    assert torch.all(torch.greater(torch.abs(axis.grad), 0))
 
 
-def test_gradcheck():
-    inputs = torch.pi * torch.randn(100, dtype=torch.double, requires_grad=True)
-    assert gradcheck(normalised_dot_product, inputs, eps=1e-6, atol=1e-4)
+def test_computes_gradients_for_axis_and_vector():
+    vector = torch.randn(5, 3).requires_grad_()
+    axis = torch.randn(5, 3).requires_grad_()
+    results = project_vector_onto_axis(vector, axis)
+    assert results.requires_grad is True
+    assert results.grad_fn is not None
+    loss = results.square().sum()
+    loss.backward()
+    assert vector.grad is not None
+    assert torch.all(torch.isfinite(vector.grad))
+    assert torch.all(torch.greater(torch.abs(vector.grad), 0))
+    assert axis.grad is not None
+    assert torch.all(torch.isfinite(axis.grad))
+    assert torch.all(torch.greater(torch.abs(axis.grad), 0))
+
+
+def test_computes_gradients_when_axis_is_zero():
+    vector = torch.randn(5, 3).requires_grad_()
+    axis = torch.zeros(5, 3).requires_grad_()
+    results = project_vector_onto_axis(vector, axis)
+    assert results.requires_grad is True
+    assert results.grad_fn is not None
+    loss = results.square().sum()
+    loss.backward()
+    assert vector.grad is not None
+    assert torch.all(torch.isfinite(vector.grad))
+    assert torch.all(torch.greater_equal(torch.abs(vector.grad), 0))
+    assert axis.grad is not None
+    assert torch.all(torch.isfinite(axis.grad))
+    assert torch.all(torch.greater_equal(torch.abs(axis.grad), 0))
+
+
+def test_gradcheck_both_zeros():
+    vectors = torch.zeros(3, dtype=torch.double, requires_grad=True)
+    axes = torch.zeros(3, dtype=torch.double, requires_grad=True)
+    assert gradcheck(project_vector_onto_axis, (vectors, axes), eps=1e-6, atol=1e-4)
+
+
+def test_gradcheck_axis_zero():
+    vectors = torch.randn(3, dtype=torch.double, requires_grad=True)
+    axes = torch.zeros(3, dtype=torch.double, requires_grad=True)
+    assert gradcheck(project_vector_onto_axis, (vectors, axes), eps=1e-6, atol=1e-4)
+
+
+def test_gradcheck_vector_zeros():
+    vectors = torch.zeros(3, dtype=torch.double, requires_grad=True)
+    axes = torch.randn(3, dtype=torch.double, requires_grad=True)
+    assert gradcheck(project_vector_onto_axis, (vectors, axes), eps=1e-6, atol=1e-4)
+
+
+def test_gradcheck_vector_and_axes():
+    vectors = torch.randn(100, 3, dtype=torch.double, requires_grad=True)
+    axes = torch.randn(100, 3, dtype=torch.double, requires_grad=True)
+    assert gradcheck(project_vector_onto_axis, (vectors, axes), eps=1e-6, atol=1e-4)
+
+
+def test_gradcheck_all_zeros():
+    vectors = torch.zeros(3, dtype=torch.double, requires_grad=True)
+    axes = torch.zeros(3, dtype=torch.double, requires_grad=True)
+    length = torch.zeros(1, dtype=torch.double, requires_grad=True)
+    assert gradcheck(
+        project_vector_onto_axis, (vectors, axes, length), eps=1e-6, atol=1e-4
+    )
+
+
+def test_gradcheck_only_length_nonzer0():
+    vectors = torch.zeros(3, dtype=torch.double, requires_grad=True)
+    axes = torch.zeros(3, dtype=torch.double, requires_grad=True)
+    length = torch.randn(1, dtype=torch.double, requires_grad=True)
+    assert gradcheck(
+        project_vector_onto_axis, (vectors, axes, length), eps=1e-6, atol=1e-4
+    )
+
+
+def test_gradcheck_axis_zero_length_nonzero():
+    vectors = torch.randn(3, dtype=torch.double, requires_grad=True)
+    axes = torch.zeros(3, dtype=torch.double, requires_grad=True)
+    length = torch.randn(1, dtype=torch.double, requires_grad=True)
+    assert gradcheck(
+        project_vector_onto_axis, (vectors, axes, length), eps=1e-6, atol=1e-4
+    )
+
+
+def test_gradcheck_vector_zeros_with_length():
+    vectors = torch.zeros(3, dtype=torch.double, requires_grad=True)
+    axes = torch.randn(3, dtype=torch.double, requires_grad=True)
+    length = torch.randn(1, dtype=torch.double, requires_grad=True)
+    assert gradcheck(
+        project_vector_onto_axis, (vectors, axes, length), eps=1e-6, atol=1e-4
+    )
+
+
+def test_gradcheck_vector_and_length_zeros():
+    vectors = torch.zeros(3, dtype=torch.double, requires_grad=True)
+    axes = torch.randn(3, dtype=torch.double, requires_grad=True)
+    length = torch.zeros(1, dtype=torch.double, requires_grad=True)
+    assert gradcheck(
+        project_vector_onto_axis, (vectors, axes, length), eps=1e-6, atol=1e-4
+    )
+
+
+def test_gradcheck_length_zero():
+    vectors = torch.randn(3, dtype=torch.double, requires_grad=True)
+    axes = torch.randn(3, dtype=torch.double, requires_grad=True)
+    length = torch.zeros(1, dtype=torch.double, requires_grad=True)
+    assert gradcheck(
+        project_vector_onto_axis, (vectors, axes, length), eps=1e-6, atol=1e-4
+    )
 
 
 def test_can_be_compiled():
-    sin_x_on_x_c = torch.compile(normalised_dot_product)
-    inputs = torch.pi * torch.randn(10, dtype=torch.double)
-    results = sin_x_on_x_c(inputs)
-    assert results.shape == (10,)
+    project_vector_onto_axis_c = torch.compile(project_vector_onto_axis)
+    vectors = torch.randn(7, 3, dtype=torch.double, requires_grad=True)
+    axes = torch.randn(7, 3, dtype=torch.double, requires_grad=True)
+    results = project_vector_onto_axis_c(vectors, axes)
+    assert results.shape == (7, 1)
     assert torch.all(results.abs() < 1.0)

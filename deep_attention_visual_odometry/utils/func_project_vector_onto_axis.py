@@ -11,9 +11,9 @@ class ProjectVectorOntoAxis(torch.autograd.Function):
         is_zero = torch.eq(axis_square_norm, 0.0)
         dot_product = (vector * axis).sum(dim=-1, keepdims=True)
         reciprocal = 1 / axis_square_norm
-        reciprocal = torch.where(is_zero, 0.0, reciprocal)
+        reciprocal[is_zero] = 0.0
         scale = dot_product / axis_square_norm
-        scale = torch.where(is_zero, torch.zeros_like(scale), scale)
+        scale[is_zero] = 0.0
         return scale, reciprocal
 
     @staticmethod
@@ -28,31 +28,29 @@ class ProjectVectorOntoAxis(torch.autograd.Function):
     # noinspection PyMethodOverriding
     @staticmethod
     def backward(
-        ctx: Any, grad_output: tuple[torch.Tensor, torch.Tensor]
+        ctx: Any, scale_grad: torch.Tensor, reciprocal_grad: torch.Tensor
     ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
-        if grad_output is None:
+        if scale_grad is None and reciprocal_grad is None:
             return None, None, None
         vector, axis, scale, reciprocal = ctx.saved_tensors
-        scale_grad, reciprocal_grad = grad_output
         grad_vector = grad_axis = grad_norm = None
-        if ctx.needs_input_grad[0]:
+        if ctx.needs_input_grad[0] and scale_grad is not None:
             # Gradients for the vector is simply
             # a / theta^2, b / theta^2, c / theta^2,
             # since they don't appear in the denominator
             grad_vector = scale_grad * reciprocal * axis
-        if ctx.needs_input_grad[1]:
-            # Scale gradient is
-            # x / theta^2 - 2 * a * (ax + by + cx) / theta^4
-            grad_axis = scale_grad * reciprocal * (vector - 2.0 * axis * scale)
-            # Add any gradient from the scale
-            grad_axis = (
-                grad_axis - 2.0 * reciprocal_grad * reciprocal * reciprocal * axis
-            )
+        if ctx.needs_input_grad[1] and scale_grad is not None:
+            # Same thing for the axis, the relationship between the axis and the reciprocal
+            # is passed through the length gradient instead.
+            grad_axis = scale_grad * reciprocal * vector
         if ctx.needs_input_grad[2]:
-            # The square norm is just the denominator in all the maths
-            # so the derivatifes just divide by it again and multiply by -1
-            grad_norm = -1.0 * scale_grad * scale * reciprocal
-            grad_norm = grad_norm - reciprocal_grad * reciprocal * reciprocal
+            grad_norm = 0.0
+            if scale_grad is not None:
+                # The square norm is just the denominator in all the maths\
+                # so the derivatives just divide by it again and multiply by -1
+                grad_norm = -1.0 * scale_grad * scale * reciprocal
+            if reciprocal_grad is not None:
+                grad_norm = grad_norm - reciprocal_grad * reciprocal * reciprocal
         return grad_vector, grad_axis, grad_norm
 
 
