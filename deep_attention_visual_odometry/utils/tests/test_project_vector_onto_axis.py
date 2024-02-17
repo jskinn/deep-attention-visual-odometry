@@ -3,34 +3,32 @@ from torch.autograd import gradcheck
 from deep_attention_visual_odometry.utils import project_vector_onto_axis
 
 
-def test_output_flattens_final_dimension():
+def test_output_is_same_shape_as_input():
     vector = torch.randn(5, 1, 2, 3)
     axis = torch.randn(5, 1, 2, 3)
     results = project_vector_onto_axis(vector, axis)
-    assert results.shape == (5, 1, 2, 1)
+    assert results.shape == (5, 1, 2, 3)
 
 
 def test_is_zero_if_axis_is_zero():
     vector = torch.tensor([1.0, -2.3, 4.0])
     axis = torch.zeros(3)
     results = project_vector_onto_axis(vector, axis)
-    assert results[0] == 0.0
+    assert torch.equal(results, torch.zeros(3))
 
 
-def test_result_times_axis_is_vector_if_vector_and_axis_are_parallel():
+def test_result_is_vector_if_vector_and_axis_are_parallel():
     vector = torch.randn(5, 3)
     axis = torch.randn(5, 1) * vector
     results = project_vector_onto_axis(vector, axis)
-    reprojected_vector = results * axis
-    assert torch.all(torch.isclose(reprojected_vector, vector))
+    assert torch.all(torch.isclose(results, vector))
 
 
-def test_result_times_axis_is_vector_if_vector_and_axis_are_parallel_in_high_dimensions():
+def test_result_is_vector_if_vector_and_axis_are_parallel_in_high_dimensions():
     vector = torch.randn(5, 18)
     axis = torch.randn(5, 1) * vector
     results = project_vector_onto_axis(vector, axis)
-    reprojected_vector = results * axis
-    assert torch.all(torch.isclose(reprojected_vector, vector))
+    assert torch.all(torch.isclose(results, vector))
 
 
 def test_is_zero_if_vector_and_axis_are_purpendicular():
@@ -41,26 +39,33 @@ def test_is_zero_if_vector_and_axis_are_purpendicular():
     assert torch.all(results.abs() < 1e-7)
 
 
-def test_product_of_results_and_axis_is_constant():
+def test_result_is_parallel_to_axis():
+    vectors = torch.randn(7, 3, dtype=torch.double, requires_grad=True)
+    axes = torch.randn(7, 3, dtype=torch.double, requires_grad=True)
+    results = project_vector_onto_axis(vectors, axes)
+    assert results.shape == (7, 3)
+    results_norm = results / torch.linalg.norm(results, dim=-1, keepdim=True)
+    axes_norm = axes / torch.linalg.norm(axes, dim=-1, keepdim=True)
+    dot_product = (results_norm * axes_norm).sum(dim=-1)
+    assert torch.all(torch.isclose(dot_product.abs(), torch.ones_like(dot_product)))
+
+
+def test_result_is_independent_of_axis_length():
     vector = torch.randn(5, 3)
     axis1 = torch.randn(5, 3)
     axis2 = torch.randn(5, 1) * axis1
     results1 = project_vector_onto_axis(vector, axis1)
     results2 = project_vector_onto_axis(vector, axis2)
-    product1 = axis1 * results1
-    product2 = axis2 * results2
-    assert torch.all(torch.isclose(product1, product2))
+    assert torch.all(torch.isclose(results1, results2))
 
 
-def test_product_of_results_and_axis_is_constant_for_many_dimensions():
+def test_result_is_independent_of_axis_length_for_many_dimensions():
     vector = torch.randn(5, 17)
     axis1 = torch.randn(5, 17)
     axis2 = torch.randn(5, 1) * axis1
     results1 = project_vector_onto_axis(vector, axis1)
     results2 = project_vector_onto_axis(vector, axis2)
-    product1 = axis1 * results1
-    product2 = axis2 * results2
-    assert torch.all(torch.isclose(product1, product2))
+    assert torch.all(torch.isclose(results1, results2))
 
 
 def test_passing_in_the_square_axis_length_doesnt_change_results():
@@ -213,5 +218,8 @@ def test_can_be_compiled():
     vectors = torch.randn(7, 3, dtype=torch.double, requires_grad=True)
     axes = torch.randn(7, 3, dtype=torch.double, requires_grad=True)
     results = project_vector_onto_axis_c(vectors, axes)
-    assert results.shape == (7, 1)
-    assert torch.all(results.abs() < 1.0)
+    assert results.shape == (7, 3)
+    results_norm = results / torch.linalg.norm(results, dim=-1, keepdim=True)
+    axes_norm = axes / torch.linalg.norm(axes, dim=-1, keepdim=True)
+    dot_product = (results_norm * axes_norm).sum(dim=-1)
+    assert torch.all(torch.isclose(dot_product.abs(), torch.ones_like(dot_product)))

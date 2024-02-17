@@ -12,9 +12,8 @@ class ProjectVectorOntoAxis(torch.autograd.Function):
         dot_product = (vector * axis).sum(dim=-1, keepdims=True)
         reciprocal = 1 / axis_square_norm
         reciprocal[is_zero] = 0.0
-        scale = dot_product / axis_square_norm
-        scale[is_zero] = 0.0
-        return scale, reciprocal
+        result = dot_product * reciprocal * axis
+        return result, reciprocal
 
     @staticmethod
     def setup_context(
@@ -28,27 +27,31 @@ class ProjectVectorOntoAxis(torch.autograd.Function):
     # noinspection PyMethodOverriding
     @staticmethod
     def backward(
-        ctx: Any, scale_grad: torch.Tensor, reciprocal_grad: torch.Tensor
+        ctx: Any, result_grad: torch.Tensor, reciprocal_grad: torch.Tensor
     ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
-        if scale_grad is None and reciprocal_grad is None:
+        if result_grad is None and reciprocal_grad is None:
             return None, None, None
-        vector, axis, scale, reciprocal = ctx.saved_tensors
+        vector, axis, result, reciprocal = ctx.saved_tensors
         grad_vector = grad_axis = grad_norm = None
-        if ctx.needs_input_grad[0] and scale_grad is not None:
-            # Gradients for the vector is simply
-            # a / theta^2, b / theta^2, c / theta^2,
+        if ctx.needs_input_grad[0] and result_grad is not None:
+            # Gradients for the vector are the outer pr
+            # a^2 / theta^2, ab / theta^2, ac / theta^2 for x
             # since they don't appear in the denominator
-            grad_vector = scale_grad * reciprocal * axis
-        if ctx.needs_input_grad[1] and scale_grad is not None:
-            # Same thing for the axis, the relationship between the axis and the reciprocal
-            # is passed through the length gradient instead.
-            grad_axis = scale_grad * reciprocal * vector
+            grad_vector = axis.unsqueeze(-2) * axis.unsqueeze(-1)
+            grad_vector = reciprocal.unsqueeze(-1) * grad_vector
+            grad_vector = (grad_vector * result_grad.unsqueeze(-2)).sum(dim=-1)
+        if ctx.needs_input_grad[1] and result_grad is not None:
+            # For the axis, it is the outer product of the vector and the axis
+            dot_product = (vector * axis).sum(dim=-1, keepdims=True)
+            grad_axis = axis.unsqueeze(-2) * vector.unsqueeze(-1)
+            grad_axis = (grad_axis * result_grad.unsqueeze(-2)).sum(dim=-1)
+            grad_axis = reciprocal * (grad_axis + dot_product * result_grad)
         if ctx.needs_input_grad[2]:
             grad_norm = 0.0
-            if scale_grad is not None:
+            if result_grad is not None:
                 # The square norm is just the denominator in all the maths\
                 # so the derivatives just divide by it again and multiply by -1
-                grad_norm = -1.0 * scale_grad * scale * reciprocal
+                grad_norm = -1.0 * result_grad * result * reciprocal
             if reciprocal_grad is not None:
                 grad_norm = grad_norm - reciprocal_grad * reciprocal * reciprocal
         return grad_vector, grad_axis, grad_norm
