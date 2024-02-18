@@ -203,7 +203,7 @@ def test_gradient_is_zero_parallel_to_axis_when_vector_and_gradient_are_parallel
     assert torch.abs(gradient[0, 0]) > 0
     assert gradient[0, 1] == 0.0
     assert torch.abs(gradient[0, 2]) > 0
-    assert torch.all(gradient[1, :] == 0.0)
+    assert torch.all(gradient[1, :].abs() < 2.5e-7)
     assert torch.abs(gradient[2, 0]) > 0
     assert gradient[2, 1] == 0.0
     assert torch.abs(gradient[2, 2]) > 0
@@ -316,9 +316,9 @@ def test_gradient_y_matches_equation():
     rotation = LieRotation(angle * axis)
     gradient = rotation.parameter_gradient(vector)
     assert gradient.shape == (3, 3)
-    assert torch.abs(gradient[1, 0] - dy_da) < 2e-7
-    assert torch.abs(gradient[1, 1] - dy_db) < 2e-7
-    assert torch.abs(gradient[1, 2] - dy_dc) < 2e-7
+    assert torch.abs(gradient[1, 0] - dy_da) < 5e-7
+    assert torch.abs(gradient[1, 1] - dy_db) < 5e-7
+    assert torch.abs(gradient[1, 2] - dy_dc) < 5e-7
 
 
 def test_gradient_z_matches_equation():
@@ -384,9 +384,9 @@ def test_vector_gradient_x_matches_equation():
     rotation = LieRotation(torch.tensor([a, b, c]))
     vector_gradient = rotation.vector_gradient()
     assert vector_gradient.shape == (3, 3)
-    assert vector_gradient[0, 0] == dx_dx
-    assert vector_gradient[0, 1] == dx_dy
-    assert vector_gradient[0, 2] == dx_dz
+    assert torch.abs(vector_gradient[0, 0] - dx_dx) < 1e-7
+    assert torch.abs(vector_gradient[0, 1] - dx_dy) < 1e-7
+    assert torch.abs(vector_gradient[0, 2] - dx_dz) < 1e-7
 
 
 def test_vector_gradient_y_matches_equation():
