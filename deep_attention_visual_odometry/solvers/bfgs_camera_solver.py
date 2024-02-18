@@ -108,8 +108,9 @@ def estimate_initial_inverse_hessian(
     :param delta_gradient: The change in gradient between the current and next iterate points.
     :return: An initial guess for the inverse hessian H_0, to be updated to H_1.
     """
+    denominator = delta_gradient.square().sum(dim=-1).clamp(min=1e-5)
     scale = (step * delta_gradient).sum(dim=-1)
-    scale = scale / delta_gradient.square().sum(dim=-1)
+    scale = scale / denominator
     return scale[:, :, None, None] * torch.eye(
         ndim, device=step.device, dtype=step.dtype
     ).reshape(1, 1, ndim, ndim)
