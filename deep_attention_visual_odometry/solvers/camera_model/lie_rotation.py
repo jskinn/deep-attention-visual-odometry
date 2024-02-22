@@ -102,28 +102,6 @@ class LieRotation:
         # Fourth term: derivatives from the cross product term
         term_4 = axis_cross_outer_product * cos_theta_minus_sin_theta_term.unsqueeze(-1)
 
-        # term_1 = (
-        #     outer_product
-        #     - 2.0
-        #     * self._lie_vector.unsqueeze(-2)
-        #     * self._lie_vector.unsqueeze(-1)
-        #     * gamma
-        # )
-        # term_1 = term_1 / angle_squared
-        # term_1 = torch.where(is_angle_zero, torch.zeros_like(term_1), term_1)
-        # term_1 = term_1 + gamma * torch.eye(3, device=vector.device).reshape(
-        #     *(1 for _ in range(gamma.ndim - 2)), 3, 3
-        # )
-        # term_1 = term_1 * one_minus_cos_theta
-        #
-        # # Term 2: e ((e \gamma - v) \sin{theta}/theta + (e x v)(cos(theta) / theta^2 - sin(theta) / theta^3))
-        # dot_diff = self._lie_vector * gamma.squeeze(-1) - vector
-        # dot_diff = dot_diff * sin_theta_on_theta.squeeze(-1)
-        # cross_diff = cos_x_on_x_squared_minus_sin_x_on_x_cubed(angle)
-        # cross_diff = cross_diff.squeeze(-1) * cross_product
-        # term_2 = dot_diff + cross_diff
-        # term_2 = term_2.unsqueeze(-1) * self._lie_vector.unsqueeze(-2)
-
         # Term 5: derivatives from the cross product
         # (sin(theta) / theta) [[0, z, -y], [-z, 0, x], [y, -x, 0]]
         x = torch.index_select(
