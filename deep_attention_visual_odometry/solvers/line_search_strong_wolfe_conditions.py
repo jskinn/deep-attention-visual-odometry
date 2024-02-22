@@ -2,6 +2,7 @@ import warnings
 import math
 import torch
 import torch.nn as nn
+from deep_attention_visual_odometry.utils import interpolate_alpha
 from .i_optimisable_function import IOptimisableFunction
 
 
@@ -151,31 +152,7 @@ class LineSearchStrongWolfeConditions(nn.Module):
             upper_gradient = (
                 error_scale * upper_gradient[zooming] * search_direction[zooming]
             ).sum(dim=-1)
-            gradient_diff = upper_gradient - lower_gradient
-            candidate_alpha = (
-                lower_alpha[zooming]
-                - lower_gradient
-                * (upper_alpha[zooming] - lower_alpha[zooming])
-                / gradient_diff
-            )
-            # Fall back to bisection if the gradients were the same, or the candidate is outside our range
-            non_linear_alpha = torch.logical_or(
-                torch.eq(gradient_diff, 0.0),
-                torch.logical_or(
-                    torch.less(
-                        candidate_alpha,
-                        torch.minimum(lower_alpha[zooming], upper_alpha[zooming]),
-                    ),
-                    torch.greater(
-                        candidate_alpha,
-                        torch.maximum(lower_alpha[zooming], upper_alpha[zooming]),
-                    ),
-                ),
-            )
-            candidate_alpha[non_linear_alpha] = (
-                lower_alpha[zooming][non_linear_alpha]
-                + upper_alpha[zooming][non_linear_alpha]
-            ) / 2.0
+            candidate_alpha = interpolate_alpha(lower_alpha[zooming], upper_alpha[zooming], lower_gradient, upper_gradient)
             candidate_alpha_wide = torch.zeros_like(upper_alpha)
             candidate_alpha_wide[zooming] = candidate_alpha
             # Evaluate the function at the chosen candidate points
