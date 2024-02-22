@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from deep_attention_visual_odometry.utils import inverse_curvature
 from .i_optimisable_function import IOptimisableFunction
 
 
@@ -88,7 +89,7 @@ def clamp_search_direction(search_direction: torch.Tensor, max_step_length: floa
     """
     Make sure the search direction is not too large.
     """
-    largest_step = search_direction.max(dim=-1).values
+    largest_step = search_direction.abs().max(dim=-1).values.clamp(min=1e-8)
     is_too_large = (largest_step > max_step_length)
     scale = torch.where(is_too_large, max_step_length / largest_step, torch.ones_like(largest_step))
     scale = scale.clamp(min=1e-16)
@@ -133,15 +134,13 @@ def update_inverse_hessian(
     # = H - frac{1}{y^T s} H y s^T - \frac{1}{y^T s} s y^T H + \frac{1}{(y^T s)^2} s y^T H y s^T + frac{s s^T}{y^T s}
     # = H - frac{1}{y^T s} (H y s^T + s y^T H) + \frac{1}{y^T s} (\frac{y^T H y}{y^T s} + 1.0) s s^T
     # y^T s (curvature):
-    curvature = torch.sum(step * delta_gradient, dim=-1)
     # Curvature (this product) _should_ be strictly positive.
     # If it isn't, set this scale factor to 0, so that the update is skipped
-    inv_curvature = torch.where(
-        torch.greater(curvature, 0.0), 1.0 / curvature, torch.zeros_like(curvature)
-    )
+    # That is all being handled by an autograd function, to avoid nan gradients.
+    inv_curvature = inverse_curvature(step, delta_gradient)
     # y^T H y / (y^T s):
     # For numerical stability, we assume |y^T H| < |y| and |y / (y^T s)| < |y|
-    # So we calcualte those ratios first before multiplying
+    # So we calculate those ratios first before multiplying
     # To avoid an intermediate scale ~|y|^2
     gradient_postmultiply_hessian = torch.matmul(
         delta_gradient[:, :, None, :], inverse_hessian

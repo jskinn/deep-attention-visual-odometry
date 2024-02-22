@@ -5,4 +5,5 @@ from .func_sin_x_on_x_cubed_minus_two_one_minus_cos_x_on_x_fourth import (
     sin_x_on_x_cubed_minus_two_one_minus_cos_x_on_x_fourth,
 )
 from .func_interpolate_alpha import interpolate_alpha
+from .func_inverse_curvature import inverse_curvature
 from .func_project_vector_onto_axis import project_vector_onto_axis
