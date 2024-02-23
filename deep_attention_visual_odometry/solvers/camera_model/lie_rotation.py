@@ -215,7 +215,7 @@ class LieRotation:
 
     def angle(self) -> torch.Tensor:
         if self._angle is None:
-            self._angle = self.angle_squared().sqrt()
+            self._angle = torch.linalg.norm(self._lie_vector, dim=-1, keepdim=True)
         return self._angle
 
     def sin_theta_on_theta(self) -> torch.Tensor:
