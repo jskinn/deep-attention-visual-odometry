@@ -145,13 +145,13 @@ def update_inverse_hessian(
     gradient_postmultiply_hessian = torch.matmul(
         delta_gradient[:, :, None, :], inverse_hessian
     )
-    gradient_on_curvature = delta_gradient * inv_curvature[:, :, None]
+    gradient_on_curvature = delta_gradient * inv_curvature
     gradient_inner_product = (
         gradient_postmultiply_hessian * gradient_on_curvature[:, :, None, :]
     ).sum(dim=-1)
     # s s^T / (y^T s):
     # Again, to avoid a matrix scaled ~|s^2|, we scale first by 1/|y^T s|
-    step_on_curvature = step * inv_curvature[:, :, None]
+    step_on_curvature = step * inv_curvature
     step_outer_product = torch.matmul(
         step_on_curvature[:, :, :, None], step[:, :, None, :]
     )
