@@ -4,7 +4,7 @@ from .simple_camera_model import SimpleCameraModel
 from .lie_rotation import LieRotation
 
 
-class SimpleCameraModelInitialGuess(nn.Module):
+class SimpleCameraModelFixedGuess(nn.Module):
     def __init__(self, num_views: int, num_points: int):
         super().__init__()
         self.focal_length = nn.Parameter(torch.tensor([[0.5]]))

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from deep_attention_visual_odometry.solvers.camera_model import (
     SimpleCameraModel,
-    SimpleCameraModelInitialGuess,
+    SimpleCameraModelFixedGuess,
 )
 from deep_attention_visual_odometry.solvers.line_search_strong_wolfe_conditions import (
     LineSearchStrongWolfeConditions,
@@ -23,7 +23,7 @@ class SimpleCameraBGFSModel(nn.Module):
         curvature: float,
     ):
         super().__init__()
-        self.initial_guess = SimpleCameraModelInitialGuess(num_views, num_points)
+        self.initial_guess = SimpleCameraModelFixedGuess(num_views, num_points)
         self.line_search = LineSearchStrongWolfeConditions(
             max_step_size=max_step_size,
             zoom_iterations=zoom_iterations,
