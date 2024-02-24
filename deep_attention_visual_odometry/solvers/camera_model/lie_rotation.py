@@ -174,9 +174,16 @@ class LieRotation:
             sliced_vector = sliced_vector.unsqueeze(1)
         return type(self)(sliced_vector)
 
-    def add_lie_parameters(self, lie_vector) -> Self:
+    def add_lie_parameters(self, lie_vector, constrain: bool = False) -> Self:
         """Add a set of parameters to the current values (such as from a gradient)"""
-        return type(self)(self._lie_vector + lie_vector)
+        new_lie_vector = self._lie_vector + lie_vector
+        if constrain:
+            # Constrain the axis-angle rotation to the range -pi, pi
+            angles = torch.linalg.norm(new_lie_vector, dim=-1, keepdim=True)
+            axes = new_lie_vector / angles.clamp(min=1e-8)
+            angles = torch.fmod(angles + torch.pi, 2 * torch.pi) - torch.pi
+            new_lie_vector = angles * axes
+        return type(self)(new_lie_vector)
 
     def masked_update(self, other: Self, mask: torch.Tensor) -> Self:
         """

@@ -40,6 +40,7 @@ class SimpleCameraModel(IOptimisableFunction):
         true_projected_points: torch.Tensor,
         minimum_distance: float = 1e-5,
         maximum_pixel_ratio: float = 1e3,
+        constrain: bool = False,
         _error: torch.Tensor | None = None,
         _gradient: torch.Tensor | None = None,
         _error_mask: torch.Tensor | None = None,
@@ -59,6 +60,7 @@ class SimpleCameraModel(IOptimisableFunction):
         """
         self.minimum_distance = float(minimum_distance)
         self.maximum_pixel_ratio = 1.0 / abs(float(maximum_pixel_ratio))
+        self._constrain = bool(constrain)
         self._num_views = true_projected_points.size(1)
         self._num_points = true_projected_points.size(2)
         self._num_estimates = focal_length.size(1)
@@ -252,17 +254,28 @@ class SimpleCameraModel(IOptimisableFunction):
         z_params = torch.cat([torch.zeros_like(z_params[:, :, 0:1]), z_params], dim=-1)
         point_params = torch.stack([x_params, y_params, z_params], dim=-1)
         new_orientation = self._orientation.add_lie_parameters(
-            torch.stack([a_params, b_params, c_params], dim=-1).unsqueeze(-2)
+            torch.stack([a_params, b_params, c_params], dim=-1).unsqueeze(-2),
+            constrain=self._constrain
         )
+
+        new_focal_length = self._focal_length + parameters[:, :, self.F]
+        new_cx = self._cx + parameters[:, :, self.CX]
+        new_cy = self._cy + parameters[:, :, self.CY]
+        if self._constrain:
+            # Apply constraints to the camera parameters
+            new_focal_length = new_focal_length.clamp(min=self.maximum_pixel_ratio)
+            new_cx = new_cx.clamp(min=-1.0, max=1.0)
+            new_cy = new_cy.clamp(min=-1.0, max=1.0)
         return type(self)(
-            focal_length=self._focal_length + parameters[:, :, self.F],
-            cx=self._cx + parameters[:, :, self.CX],
-            cy=self._cy + parameters[:, :, self.CY],
+            focal_length=new_focal_length,
+            cx=new_cx,
+            cy=new_cy,
             translation=self._translation + t_params,
             orientation=new_orientation,
             world_points=self._world_points + point_params,
             true_projected_points=self._true_projected_points,
             minimum_distance=self.minimum_distance,
+            constrain=self._constrain,
         )
 
     def masked_update(self, other: Self, mask: torch.Tensor) -> Self:
@@ -310,6 +323,7 @@ class SimpleCameraModel(IOptimisableFunction):
             world_points=world_points,
             true_projected_points=self._true_projected_points,
             minimum_distance=self.minimum_distance,
+            constrain=self._constrain,
             _error=error,
             _error_mask=error_mask,
             _gradient=gradient,
