@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from deep_attention_visual_odometry.utils import inverse_curvature
 from .i_optimisable_function import IOptimisableFunction
+from .search_direction_networks import IModifySearchDirections
 
 
 class BFGSCameraSolver(nn.Module):
@@ -24,9 +25,11 @@ class BFGSCameraSolver(nn.Module):
         epsilon: float,
         max_step_distance: float,
         line_search: nn.Module,
+        search_direction_network: IModifySearchDirections | None
     ):
         super().__init__()
         self.line_search = line_search
+        self.search_direction_network = search_direction_network
         self.max_iterations = int(max_iterations)
         self.epsilon = torch.tensor(float(epsilon))
         self.max_step_distance = float(max_step_distance)
@@ -63,6 +66,10 @@ class BFGSCameraSolver(nn.Module):
             # Clamp the search direction. In practice, sometimes there are extreme gradients,
             # And if the inverse hessian is not sufficiently converged yet, we may end up stepping much too far
             search_direction = clamp_search_direction(search_direction, self.max_step_distance)
+            # Allow a learned component to modify the search direction
+            if self.search_direction_network is not None:
+                error = function.get_error()
+                search_direction = self.search_direction_network(search_direction, error, gradient)
             # Line search for an update step that satisfies the wolfe conditions
             next_function_point, step = self.line_search(function, search_direction)
             # Update the inverse hessian based on the next chosen point
