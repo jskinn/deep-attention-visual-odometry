@@ -24,6 +24,7 @@ nvidia-cusparse-cu12 ="12.1.0.106"
 nvidia-nccl-cu12 ="2.18.1"
 nvidia-nvtx-cu12 ="12.1.105"
 triton ="2.1.0"
+mlflow = "^2.10.2"
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.5.1"
