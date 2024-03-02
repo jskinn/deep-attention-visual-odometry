@@ -228,6 +228,28 @@ class SimpleCameraModel(IOptimisableFunction):
             self._gradient_mask = None
         return self._gradient
 
+    def as_parameters_vector(self) -> torch.Tensor:
+        orientation_vector = self._orientation.as_parameters_vector()
+        return torch.cat(
+            [
+                self.cx,
+                self.cy,
+                self.focal_length,
+                # Stack the camera properties, by parameter
+                orientation_vector[:, :, :, 0],
+                orientation_vector[:, :, :, 1],
+                orientation_vector[:, :, :, 2],
+                self._translation[:, :, :, 0],
+                self._translation[:, :, :, 1],
+                self._translation[:, :, :, 1],
+                # Stack the world points, per axis
+                self._world_points[:, :, :, 0],
+                self._world_points[:, :, :, 1],
+                self._world_points[:, :, :, 2],
+            ],
+            dim=-1,
+        )
+
     def add(self, parameters: torch.Tensor) -> Self:
         # Find the slice indices for the parameters, based on the number of views and world points
         a_idx = self.VIEW_START
@@ -255,7 +277,7 @@ class SimpleCameraModel(IOptimisableFunction):
         point_params = torch.stack([x_params, y_params, z_params], dim=-1)
         new_orientation = self._orientation.add_lie_parameters(
             torch.stack([a_params, b_params, c_params], dim=-1).unsqueeze(-2),
-            constrain=self._constrain
+            constrain=self._constrain,
         )
 
         new_focal_length = self._focal_length + parameters[:, :, self.F]

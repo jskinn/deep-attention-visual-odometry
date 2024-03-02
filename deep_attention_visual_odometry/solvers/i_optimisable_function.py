@@ -40,6 +40,10 @@ class IOptimisableFunction(ABC):
         """Get the gradient of the function w.r.t. each of the parameters. BxExP"""
         pass
 
+    def as_parameters_vector(self) -> torch.Tensor:
+        """Convert the function parameters to a single tensor BxExP. Used to pass it in to networks."""
+        pass
+
     @abstractmethod
     def add(self, parameters: torch.Tensor) -> Self:
         """Return a new instance of this function at a new set of parameters.

@@ -196,6 +196,13 @@ class LieRotation:
         lie_vector = torch.where(mask, other._lie_vector, self._lie_vector)
         return type(self)(lie_vector)
 
+    def as_parameters_vector(self) -> torch.Tensor:
+        """
+        Get the underlying parameter vector, for network transformation
+        :return:
+        """
+        return self._lie_vector
+
     @classmethod
     def from_quaternion(cls: type[Self], quaternion: torch.Tensor) -> Self:
         """

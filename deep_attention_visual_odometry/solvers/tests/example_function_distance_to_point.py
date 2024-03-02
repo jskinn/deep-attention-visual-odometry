@@ -34,6 +34,10 @@ class ExampleFunctionDistanceToPoint(IOptimisableFunction):
         """Get the gradient of the function w.r.t. each of the parameters. BxExP"""
         return 2.0 * (self.parameters - self.target_points)
 
+    def as_parameters_vector(self) -> torch.Tensor:
+        """Get the parameters vector"""
+        return self.parameters
+
     def add(self, parameters: torch.Tensor) -> Self:
         """Return a new instance of this function at a new set of parameters.
         Used for the optimisation step.
