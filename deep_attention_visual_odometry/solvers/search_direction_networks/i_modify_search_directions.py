@@ -1,3 +1,4 @@
+import torch
 from torch import Module, Tensor
 from abc import ABC, abstractmethod
 
@@ -9,6 +10,9 @@ class IModifySearchDirections(ABC, Module):
     (The point of this interface is to standardise the forward arguments, allowing Liskov substitution,
     which normal torch Modules violate.)
     """
+
+    def __call__(self, search_direction: Tensor, parameters: Tensor, error: Tensor, step_idx: int) -> torch.Tensor:
+        return super().__call__(search_direction, parameters, error, step_idx)
 
     @abstractmethod
     def forward(

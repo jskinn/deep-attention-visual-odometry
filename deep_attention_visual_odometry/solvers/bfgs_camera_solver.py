@@ -68,8 +68,9 @@ class BFGSCameraSolver(nn.Module):
             search_direction = clamp_search_direction(search_direction, self.max_step_distance)
             # Allow a learned component to modify the search direction
             if self.search_direction_network is not None:
+                parameters = function.as_parameters_vector()
                 error = function.get_error()
-                search_direction = self.search_direction_network(search_direction, error, gradient)
+                search_direction = self.search_direction_network(search_direction, parameters, error, step_idx)
             # Line search for an update step that satisfies the wolfe conditions
             next_function_point, step = self.line_search(function, search_direction)
             # Update the inverse hessian based on the next chosen point
