@@ -8,7 +8,13 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
     A dataset that randomly generates 3D points, and projects them through a random transform and camera matrix
     """
 
-    def __init__(self, epoch_length: int, num_points: int, num_views: int, min_camera_distance: float = 0.1):
+    def __init__(
+        self,
+        epoch_length: int,
+        num_points: int,
+        num_views: int,
+        min_camera_distance: float = 0.1,
+    ):
         self.epoch_length = int(epoch_length)
         self._num_points = int(num_points)
         self._num_views = int(num_views)
@@ -39,7 +45,7 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         world_points = self._generate_world_points()
         camera_extrinsics = self._generate_camera_extrinisics(world_points)
         camera_intrinsics = self._generate_camera_intrinsics()
-        projected_points, projection_weights = self._project_points(
+        projected_points, visibility_mask = self._project_points(
             world_points, camera_extrinsics, camera_intrinsics
         )
         return CameraViewsAndPoints(
@@ -47,7 +53,7 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
             camera_extrinsics=camera_extrinsics,
             camera_intrinsics=camera_intrinsics,
             projected_points=projected_points,
-            projection_weights=projection_weights,
+            visibility_mask=visibility_mask,
         )
 
     def _generate_world_points(self) -> torch.Tensor:
@@ -61,7 +67,6 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         return torch.cat([torch.zeros(1, 3, dtype=torch.float32), world_points])
 
     def _generate_camera_extrinisics(self, world_points: torch.Tensor) -> torch.Tensor:
-        # TODO:
         # - Pick three points: A location, a view target, and an up direction
         # - Perturb each of those base points for each camera
         # - Orthonomralise (target - location) and (up - location) to produce a rotation matrix
@@ -99,23 +104,28 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         camera_targets = camera_target_base[None, :] + self._camera_target_spread[
             None, :
         ] * torch.randn(self._num_views, 3, dtype=torch.float32)
-        camera_up = up_base[None, :] + self._camera_up_spread[None, :] * torch.rand(
+        camera_up = up_base[None, :] + self._camera_up_spread[None, :] * torch.randn(
             self._num_views, 3, dtype=torch.float32
         )
 
         # Orthonormalise to produce a rotation matrix
         forward = camera_targets - camera_locations
         up = camera_up - camera_locations
-        forward = forward / torch.linalg.vector_norm(forward, keepdim=True)
+        forward = forward / torch.linalg.vector_norm(forward, dim=-1, keepdim=True)
         up = up - forward * (forward * up).sum(dim=-1, keepdims=True)
-        up = up / torch.linalg.vector_norm(up, keepdim=True)
+        up = up / torch.linalg.vector_norm(up, dim=-1, keepdim=True)
         left = torch.linalg.cross(forward, up)
 
         # Check that the points are all at least the minimum distance away
-        z_distances = (forward[:, None, :] * (world_points[None, :, :] - camera_locations[:, None, :])).sum(dim=-1)
+        z_distances = (
+            forward[:, None, :]
+            * (world_points[None, :, :] - camera_locations[:, None, :])
+        ).sum(dim=-1)
         z_distances = z_distances - self._min_camera_distance
         z_distances, _ = torch.min(z_distances, dim=-1)
-        z_distances = torch.where(z_distances < 0.0, z_distances, torch.zeros_like(z_distances))
+        z_distances = torch.where(
+            z_distances < 1e-3, z_distances, torch.zeros_like(z_distances)
+        )
         camera_locations = camera_locations - z_distances[:, None] * forward
 
         # Assemble 4x4 extrinisics matrices
@@ -133,8 +143,8 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         return transforms
 
     def _generate_camera_intrinsics(self) -> torch.Tensor:
-        angle = torch.pi / 18 + (8 * torch.pi / 18) * torch.rand(1)
-        image_centre = 0.5 * torch.randn(2)
+        angle = 3 * torch.pi / 18 + (9 * torch.pi / 18) * torch.rand(1)
+        image_centre = (0.2 * torch.randn(2)).clamp(min=-0.5, max=-0.5)
         focal_length = 1.0 / torch.tan(angle / 2.0)
         return torch.tensor(
             [
@@ -163,8 +173,15 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         projected_points = (
             projected_points[:, :, 0:2, 0] / projected_points[:, :, 2:3, 0]
         )
-        # weights = torch.where(projected_points[])
-        return projected_points, torch.ones_like(projected_points[:, :, 0])
+        visibility = torch.logical_and(
+            torch.logical_and(
+                projected_points[:, :, 0] > -1.0, projected_points[:, :, 0] < 1.0
+            ),
+            torch.logical_and(
+                projected_points[:, :, 1] > -1.0, projected_points[:, :, 1] < 1.0
+            ),
+        )
+        return projected_points, visibility
 
     def _generate_transform(self) -> torch.Tensor:
         transform_parameters = torch.randn(6) * self._transform_std
