@@ -35,10 +35,11 @@ class SimpleCameraBGFSModel(nn.Module):
             epsilon=epsilon,
             max_step_distance=1e3,
             line_search=self.line_search,
+            search_direction_network=None
         )
 
-    def forward(self, projected_points: torch.Tensor) -> SimpleCameraModel:
+    def forward(self, projected_points: torch.Tensor, visiblity_mask: torch.Tensor) -> SimpleCameraModel:
         # projected_points = projected_points.unsqueeze(1)
-        initial_guess = self.initial_guess(projected_points)
+        initial_guess = self.initial_guess(projected_points, visiblity_mask)
         solution = self.solver(initial_guess)
         return solution

@@ -38,6 +38,7 @@ class SimpleCameraModel(IOptimisableFunction):
         orientation: LieRotation,
         world_points: torch.Tensor,
         true_projected_points: torch.Tensor,
+        visibility_mask: torch.Tensor,
         minimum_distance: float = 1e-5,
         maximum_pixel_ratio: float = 1e3,
         constrain: bool = False,
@@ -73,6 +74,7 @@ class SimpleCameraModel(IOptimisableFunction):
         self._translation = translation
         self._world_points = world_points
         self._true_projected_points = true_projected_points
+        self._visibility_mask = visibility_mask
         self._orientation = orientation
         self._camera_relative_points = None
         self._u = None
@@ -296,6 +298,7 @@ class SimpleCameraModel(IOptimisableFunction):
             orientation=new_orientation,
             world_points=self._world_points + point_params,
             true_projected_points=self._true_projected_points,
+            visibility_mask=self._visibility_mask,
             minimum_distance=self.minimum_distance,
             constrain=self._constrain,
         )
@@ -344,6 +347,7 @@ class SimpleCameraModel(IOptimisableFunction):
             orientation=orientation,
             world_points=world_points,
             true_projected_points=self._true_projected_points,
+            visibility_mask=self._visibility_mask,
             minimum_distance=self.minimum_distance,
             constrain=self._constrain,
             _error=error,

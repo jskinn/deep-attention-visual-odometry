@@ -21,7 +21,7 @@ class SimpleCameraModelFixedGuess(nn.Module):
         self.world_xy_points = nn.Parameter(torch.randn(1, 1, num_points - 2, 2))
         self.world_z_points = nn.Parameter(torch.randn(1, 1, num_points - 3, 1))
 
-    def forward(self, projected_points: torch.Tensor) -> SimpleCameraModel:
+    def forward(self, projected_points: torch.Tensor, visiblity_mask: torch.Tensor) -> SimpleCameraModel:
         batch_size = projected_points.size(0)
         focal_length = self.focal_length.tile(batch_size, 1)
         cx = self.cx.tile(batch_size, 1)
@@ -52,4 +52,5 @@ class SimpleCameraModelFixedGuess(nn.Module):
             translation=translation,
             world_points=world_points,
             true_projected_points=projected_points,
+            visibility_mask=visibility_mask,
         )
