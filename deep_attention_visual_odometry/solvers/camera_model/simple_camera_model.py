@@ -55,6 +55,8 @@ class SimpleCameraModel(IOptimisableFunction):
         :param orientation: BxExMx3
         :param world_points: BxExNx3 (fixed for all views)
         :param true_projected_points: BxMxNx2
+        :param visibility_mask: BxMxN Whether or not a given point appears within a view.
+        Missing points have their error ignored.
         :param minimum_distance: Minimum distance from the camera plane
         :param maximum_pixel_ratio: The maximum ratio for x/z and y/z.
         Since we expect the image coordinates to range [-1, 1], constraining this keeps the error sane.
@@ -120,30 +122,35 @@ class SimpleCameraModel(IOptimisableFunction):
         if self._error is None:
             u = self._get_u()
             v = self._get_v()
-            self._error = (
-                self._error_scale
-                * (u - self._true_projected_points[:, None, :, :, 0]).square()
-            ).sum(dim=(-2, -1)) + (
-                self._error_scale
-                * (v - self._true_projected_points[:, None, :, :, 1]).square()
-            ).sum(
+            u_residuals = u - self._true_projected_points[:, None, :, :, 0]
+            v_residuals = v - self._true_projected_points[:, None, :, :, 1]
+            u_residuals = u_residuals * self._visibility_mask[:, None, :, :]
+            v_residuals = v_residuals * self._visibility_mask[:, None, :, :]
+            self._error = (self._error_scale * u_residuals.square()).sum(
                 dim=(-2, -1)
-            )
+            ) + (self._error_scale * v_residuals.square()).sum(dim=(-2, -1))
             self._error_mask = None
         elif self._error_mask is not None:
             u = self._get_u()
             v = self._get_v()
+            visibility_mask = self._visibility_mask[:, None, :, :].expand_as(u)
             to_update = torch.logical_not(self._error_mask)
             u = u[to_update]
             v = v[to_update]
+            visibility_mask = visibility_mask[to_update]
             true_projected_points = self._true_projected_points.unsqueeze(1).tile(
                 1, self.num_estimates, 1, 1, 1
             )
             true_projected_points = true_projected_points[to_update]
+
+            u_residuals = u - true_projected_points[:, :, :, 0]
+            v_residuals = v - true_projected_points[:, :, :, 1]
+            u_residuals = u_residuals * visibility_mask
+            v_residuals = v_residuals * visibility_mask
             new_error = (
-                self._error_scale * (u - true_projected_points[:, :, :, 0]).square()
+                self._error_scale * u_residuals.square()
             ).sum(dim=(-2, -1)) + (
-                self._error_scale * (v - true_projected_points[:, :, :, 1]).square()
+                self._error_scale * v_residuals.square()
             ).sum(
                 dim=(-2, -1)
             )
@@ -164,14 +171,15 @@ class SimpleCameraModel(IOptimisableFunction):
             v = self._get_v()
             residuals_u = (
                 2.0
-                * self._error_scale
+                * self._error_scale * self._visibility_mask[:, None, :, :]
                 * (u - self._true_projected_points[:, None, :, :, 0])
             )
             residuals_v = (
                 2.0
-                * self._error_scale
+                * self._error_scale * self._visibility_mask[:, None, :, :]
                 * (v - self._true_projected_points[:, None, :, :, 1])
             )
+
             partial_derivatives = _compute_gradient_from_intermediates(
                 x_prime=camera_relative_points[:, :, :, :, 0],
                 y_prime=camera_relative_points[:, :, :, :, 1],
@@ -189,11 +197,13 @@ class SimpleCameraModel(IOptimisableFunction):
             camera_relative_points = camera_relative_points[self._gradient_mask]
             camera_relative_points = camera_relative_points.unsqueeze(1)
             u = self._get_u()
+            visibility_mask = self._visibility_mask[:, None, :, :].expand_as(u)
             u = u[self._gradient_mask]
             u = u.unsqueeze(1)
             v = self._get_v()
             v = v[self._gradient_mask]
             v = v.unsqueeze(1)
+            visibility_mask = visibility_mask[self._gradient_mask].unsqueeze(1)
             focal_length = self._focal_length[self._gradient_mask]
             focal_length = focal_length.unsqueeze(1)
             true_projected_points = self._true_projected_points.unsqueeze(1).tile(
@@ -210,10 +220,10 @@ class SimpleCameraModel(IOptimisableFunction):
             )
             rotation_gradients = orientation.vector_gradient()
             residuals_u = (
-                2.0 * self._error_scale * (u - true_projected_points[:, :, :, :, 0])
+                2.0 * self._error_scale * visibility_mask * (u - true_projected_points[:, :, :, :, 0])
             )
             residuals_v = (
-                2.0 * self._error_scale * (v - true_projected_points[:, :, :, :, 1])
+                2.0 * self._error_scale * visibility_mask * (v - true_projected_points[:, :, :, :, 1])
             )
             partial_derivatives = _compute_gradient_from_intermediates(
                 x_prime=camera_relative_points[:, :, :, :, 0],

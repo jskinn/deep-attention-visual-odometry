@@ -26,7 +26,7 @@ class CameraOptmisationTrainingModule(LightningModule):
         step_name: str = "Training",
         log_weights: bool = False,
     ):
-        predictions = self.network(batch.projected_points)
+        predictions = self.network(batch.projected_points, batch.visibility_mask)
         focal_length_loss = self.loss_fn(
             predictions.focal_length, batch.camera_intrinsics[:, 0:1, 0]
         )

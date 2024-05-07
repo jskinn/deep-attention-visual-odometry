@@ -20,7 +20,7 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         self._num_views = int(num_views)
         self._min_camera_distance = float(min_camera_distance)
 
-        self._camera_distance_mean = 15.0
+        self._camera_distance_mean = 20.0
         self._camera_distance_std = 5.0
         self._camera_location_spread = torch.tensor(
             [3.0, 3.0, 3.0], dtype=torch.float32
