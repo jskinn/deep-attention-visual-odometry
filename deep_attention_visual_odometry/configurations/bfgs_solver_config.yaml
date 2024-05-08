@@ -27,17 +27,18 @@ model:
           init_args:
             num_views: 4
             num_points: 8
+            constrain: true
         solver:
           class_path: deep_attention_visual_odometry.solvers.BFGSCameraSolver
           init_args:
-            max_iterations: 10
+            max_iterations: 25
             epsilon: 1e-6
             max_step_distance: 1e6
             line_search:
               class_path: deep_attention_visual_odometry.solvers.line_search_strong_wolfe_conditions.LineSearchStrongWolfeConditions
               init_args:
                 max_step_size: 32
-                zoom_iterations: 7
+                zoom_iterations: 10
                 sufficient_decrease: 1e-4
                 curvature: 0.9
 data:
@@ -47,6 +48,6 @@ data:
     num_workers: 12
     num_points: 8
     num_views: 4
-    training_length: 1024
-    validation_length: 128
-    test_length: 128
+    training_batches: 128
+    validation_batches: 16
+    test_batches: 16

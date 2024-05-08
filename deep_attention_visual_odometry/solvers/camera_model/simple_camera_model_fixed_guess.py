@@ -5,8 +5,9 @@ from .lie_rotation import LieRotation
 
 
 class SimpleCameraModelFixedGuess(nn.Module):
-    def __init__(self, num_views: int, num_points: int):
+    def __init__(self, num_views: int, num_points: int, constrain: bool):
         super().__init__()
+        self.constrain = bool(constrain)
         self.focal_length = nn.Parameter(torch.tensor([[0.5]]))
         self.cx = nn.Parameter(torch.tensor([[0.0]]))
         self.cy = nn.Parameter(torch.tensor([[0.0]]))
@@ -53,4 +54,5 @@ class SimpleCameraModelFixedGuess(nn.Module):
             world_points=world_points,
             true_projected_points=projected_points,
             visibility_mask=visibility_mask,
+            constrain=self.constrain,
         )
