@@ -1,14 +1,19 @@
 seed_everything: 1415926535
 trainer:
   logger:
-    class_path: lightning.pytorch.loggers.MLFlowLogger
-    init_args:
-      experiment_name: "camera solvers"
-      run_name: "base bfgs solver"
-      tracking_uri: "http://localhost:8080"
-      tags:
-        solver: "BFGS"
-        camera_model: "simple"
+    # Note: Pytorch lightning uses the first logger to determine the trainers "log_dir".
+    - class_path: lightning.pytorch.loggers.TensorBoardLogger
+      init_args:
+        save_dir: "lightning_logs"
+        name: "base_bgfs_solver"
+    - class_path: lightning.pytorch.loggers.MLFlowLogger
+      init_args:
+        experiment_name: "camera solvers"
+        run_name: "base bfgs solver"
+        tracking_uri: "http://localhost:8080"
+        tags:
+          solver: "BFGS"
+          camera_model: "simple"
   max_epochs: 256
 #  detect_anomaly: true
 model:
