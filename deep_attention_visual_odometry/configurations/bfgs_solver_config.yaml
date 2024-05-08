@@ -1,25 +1,45 @@
-seed_everything: 1415926535897932384
+seed_everything: 1415926535
 trainer:
-  logger: true
+  logger:
+    class_path: lightning.pytorch.loggers.MLFlowLogger
+    init_args:
+      experiment_name: "camera solvers"
+      run_name: "base bfgs solver"
+      tracking_uri: "http://localhost:8080"
+      tags:
+        solver: "BFGS"
+        camera_model: "simple"
+  max_epochs: 256
+#  detect_anomaly: true
 model:
   class_path: deep_attention_visual_odometry.training_modules.CameraOptmisationTrainingModule
   init_args:
     network:
       class_path: deep_attention_visual_odometry.networks.simple_camera_bgfs_model.SimpleCameraBGFSModel
       init_args:
-        num_views: 4
-        num_points: 8
-        max_iterations: 20
-        epsilon: 1e-6
-        max_step_size: 32
-        zoom_iterations: 10
-        sufficient_decrease: 1e-4
-        curvature: 0.9
+        initial_guess:
+          class_path: deep_attention_visual_odometry.solvers.camera_model.SimpleCameraModelFixedGuess
+          init_args:
+            num_views: 4
+            num_points: 8
+        solver:
+          class_path: deep_attention_visual_odometry.solvers.BFGSCameraSolver
+          init_args:
+            max_iterations: 10
+            epsilon: 1e-6
+            max_step_distance: 1e6
+            line_search:
+              class_path: deep_attention_visual_odometry.solvers.line_search_strong_wolfe_conditions.LineSearchStrongWolfeConditions
+              init_args:
+                max_step_size: 32
+                zoom_iterations: 7
+                sufficient_decrease: 1e-4
+                curvature: 0.9
 data:
   class_path: deep_attention_visual_odometry.data_modules.CameraViewDataModule
   init_args:
     batch_size: 64
-    num_workers: 0
+    num_workers: 12
     num_points: 8
     num_views: 4
     training_length: 1024

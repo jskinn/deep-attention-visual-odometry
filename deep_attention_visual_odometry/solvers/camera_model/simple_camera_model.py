@@ -338,6 +338,7 @@ class SimpleCameraModel(IOptimisableFunction):
             # Should happen most of the time.
             world_points = self._world_points
         else:
+            # TODO: It might be more efficient to use expand_as
             world_mask = mask[:, :, None, None].tile(
                 1, 1, *self._world_points.shape[2:]
             )

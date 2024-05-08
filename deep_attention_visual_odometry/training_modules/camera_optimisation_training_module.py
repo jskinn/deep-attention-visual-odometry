@@ -1,4 +1,5 @@
 from functools import partial
+from typing import Literal
 import torch
 import torch.nn as nn
 from lightning import LightningModule
@@ -6,10 +7,11 @@ from deep_attention_visual_odometry.base_types import CameraViewsAndPoints
 
 
 class CameraOptmisationTrainingModule(LightningModule):
-    def __init__(self, network: nn.Module):
+    def __init__(self, network: nn.Module, matmul_precision: Literal["medium", "high"] = "high"):
         super().__init__()
         self.network = network
         self.loss_fn = nn.MSELoss(reduction="mean")
+        torch.set_float32_matmul_precision(matmul_precision)
 
     def training_step(self, batch: CameraViewsAndPoints, batch_idx):
         return self._step(batch, "Training")
@@ -37,7 +39,7 @@ class CameraOptmisationTrainingModule(LightningModule):
         self.log(f"{step_name} cy loss", cy_loss)
 
         loss = focal_length_loss + cx_loss + cy_loss
-        self.log(f"{step_name} loss", loss)
+        self.log(f"{step_name} loss", loss, prog_bar=True)
         return loss
 
     def configure_optimizers(self):
