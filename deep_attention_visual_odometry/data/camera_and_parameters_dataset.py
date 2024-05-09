@@ -58,13 +58,23 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
 
     def _generate_world_points(self) -> torch.Tensor:
         world_points = self._points_std * torch.randn(
-            self._num_points - 1, 3, dtype=torch.float32
+            self._num_points - 2, 3, dtype=torch.float32
         )
         # Setting zeros in the first 3 points constrains the origin and orientation of the points
-        world_points[0, 1] = 0.0
         world_points[0, 2] = 0.0
-        world_points[1, 2] = 0.0
-        return torch.cat([torch.zeros(1, 3, dtype=torch.float32), world_points])
+        return torch.cat(
+            [
+                torch.tensor(
+                    [
+                        [0.0, 0.0, 0.0],
+                        [1.0, 0.0, 0.0],
+                    ],
+                    dtype=torch.float32,
+                ),
+                world_points,
+            ],
+            dim=0,
+        )
 
     def _generate_camera_extrinisics(self, world_points: torch.Tensor) -> torch.Tensor:
         # - Pick three points: A location, a view target, and an up direction
@@ -73,14 +83,16 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         # This should give us n views with similar but spread out locations,
         # looking approximately through the centre of mass of the points
         world_centre = world_points.mean(dim=0)
-        camera_direction = torch.randn(3, dtype=torch.float32)
-        camera_direction = camera_direction / torch.linalg.vector_norm(
-            camera_direction, dim=-1, keepdim=True
-        )
-        up_direction = torch.randn(3, dtype=torch.float32)
-        up_direction = up_direction / torch.linalg.vector_norm(
-            up_direction, dim=-1, keepdim=True
-        )
+        # camera_direction = torch.randn(3, dtype=torch.float32)
+        # camera_direction = camera_direction / torch.linalg.vector_norm(
+        #     camera_direction, dim=-1, keepdim=True
+        # )
+        camera_direction = torch.tensor([0.0, 0.0, -1.0])
+        # up_direction = torch.randn(3, dtype=torch.float32)
+        # up_direction = up_direction / torch.linalg.vector_norm(
+        #     up_direction, dim=-1, keepdim=True
+        # )
+        up_direction = torch.tensor([0.0, -1.0, 0.0])
         camera_distance = (
             self._camera_distance_mean
             + self._camera_distance_std * torch.randn(1, dtype=torch.float32)
@@ -129,8 +141,7 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         camera_locations = camera_locations - z_distances[:, None] * forward
 
         # Assemble 4x4 extrinisics matrices
-        transforms = torch.zeros(self._num_views, 4, 4, dtype=torch.float32)
-        transforms[:, 3, 3] = 1.0
+        transforms = torch.zeros(self._num_views, 3, 4, dtype=torch.float32)
         transforms[:, 0:3, 0] = -left
         transforms[:, 0:3, 1] = -up
         transforms[:, 0:3, 2] = forward
@@ -144,44 +155,46 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
 
     def _generate_camera_intrinsics(self) -> torch.Tensor:
         angle = 3 * torch.pi / 18 + (9 * torch.pi / 18) * torch.rand(1)
-        image_centre = (0.2 * torch.randn(2)).clamp(min=-0.5, max=-0.5)
+        image_centre = (0.2 * torch.randn(2)).clamp(min=-0.5, max=0.5)
         focal_length = 1.0 / torch.tan(angle / 2.0)
-        return torch.tensor(
-            [
-                [focal_length, 0.0, image_centre[0], 0.0],
-                [0.0, focal_length, image_centre[1], 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-            ]
-        )
+        return torch.tensor([focal_length, image_centre[0], image_centre[1]])
 
     def _project_points(
         self,
         world_points: torch.Tensor,
-        camera_extrinisics,
+        camera_extrinisics: torch.Tensor,
         camera_intrinisics: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         augmented_points = torch.cat(
             [world_points, torch.ones_like(world_points[:, 0:1])], dim=1
         )
-        inv_transforms = torch.linalg.inv(camera_extrinisics)
+        # This only works because there is no scale component to the extrinsics
+        inv_rotations = camera_extrinisics[:, 0:3, 0:3].transpose(-2, -1)
+        inv_translations = -1.0 * torch.matmul(
+            inv_rotations, camera_extrinisics[:, 0:3, 3:4]
+        )
+        inv_transforms = torch.cat([inv_rotations, inv_translations], dim=-1)
+        # inv_transforms = torch.linalg.inv(camera_extrinisics)
         camera_relative_points = torch.matmul(
             inv_transforms[:, None, :, :], augmented_points[None, :, :, None]
         )
-        projected_points = torch.matmul(
-            camera_intrinisics[None, None, :, :], camera_relative_points
+        z_distances = camera_relative_points[:, :, 2, 0].clamp(min=1e-8)
+        projected_u = (
+            camera_intrinisics[0] * camera_relative_points[:, :, 0, 0] / z_distances
+            + camera_intrinisics[1]
         )
-        projected_points = (
-            projected_points[:, :, 0:2, 0] / projected_points[:, :, 2:3, 0]
+        projected_v = (
+            camera_intrinisics[0] * camera_relative_points[:, :, 1, 0] / z_distances
+            + camera_intrinisics[2]
         )
         visibility = torch.logical_and(
-            torch.logical_and(
-                projected_points[:, :, 0] > -1.0, projected_points[:, :, 0] < 1.0
-            ),
-            torch.logical_and(
-                projected_points[:, :, 1] > -1.0, projected_points[:, :, 1] < 1.0
-            ),
+            torch.logical_and(projected_u > -1.0, projected_u < 1.0),
+            torch.logical_and(projected_v > -1.0, projected_v < 1.0),
         )
-        return projected_points, visibility
+        return (
+            torch.cat([projected_u.unsqueeze(-1), projected_v.unsqueeze(-1)], dim=-1),
+            visibility,
+        )
 
     def _generate_transform(self) -> torch.Tensor:
         transform_parameters = torch.randn(6) * self._transform_std

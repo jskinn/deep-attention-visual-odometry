@@ -8,8 +8,9 @@ class CameraViewsAndPoints(NamedTuple):
     Designed for M views of N points.
     Used as a batch type from the data loaders, so may gain a batch dimension
     """
-    projected_points: Tensor    # (Bx)MxNx2
-    visibility_mask: Tensor     # (Bx)MxN
-    camera_intrinsics: Tensor   # (Bx)Mx3x4
-    camera_extrinsics: Tensor   # (Bx)Mx4x4
-    world_points: Tensor        # (Bx)Nx3
+
+    projected_points: Tensor  # (Bx)MxNx2
+    visibility_mask: Tensor  # (Bx)MxN
+    camera_intrinsics: Tensor  # (Bx)Mx3
+    camera_extrinsics: Tensor  # (Bx)Mx3x4
+    world_points: Tensor  # (Bx)Nx3

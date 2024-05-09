@@ -6,7 +6,9 @@ from deep_attention_visual_odometry.base_types import CameraViewsAndPoints
 
 
 class CameraOptmisationTrainingModule(LightningModule):
-    def __init__(self, network: nn.Module, matmul_precision: Literal["medium", "high"] = "high"):
+    def __init__(
+        self, network: nn.Module, matmul_precision: Literal["medium", "high"] = "high"
+    ):
         super().__init__()
         self.network = network
         self.loss_fn = nn.MSELoss(reduction="mean")
@@ -29,10 +31,10 @@ class CameraOptmisationTrainingModule(LightningModule):
     ):
         predictions = self.network(batch.projected_points, batch.visibility_mask)
         focal_length_loss = self.loss_fn(
-            predictions.focal_length, batch.camera_intrinsics[:, 0:1, 0]
+            predictions.focal_length[:, 0], batch.camera_intrinsics[:, 0]
         )
-        cx_loss = self.loss_fn(predictions.cx, batch.camera_intrinsics[:, 2:3, 0])
-        cy_loss = self.loss_fn(predictions.cy, batch.camera_intrinsics[:, 2:3, 1])
+        cx_loss = self.loss_fn(predictions.cx[:, 0], batch.camera_intrinsics[:, 1])
+        cy_loss = self.loss_fn(predictions.cy[:, 0], batch.camera_intrinsics[:, 2])
         self.log(f"{step_name} focal length loss", focal_length_loss)
         self.log(f"{step_name} cx loss", cx_loss)
         self.log(f"{step_name} cy loss", cy_loss)
