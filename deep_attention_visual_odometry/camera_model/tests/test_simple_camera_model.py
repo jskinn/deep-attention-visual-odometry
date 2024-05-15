@@ -3,8 +3,8 @@ import math
 import pytest
 import torch
 import torch.nn as nn
-from deep_attention_visual_odometry.solvers.camera_model import SimpleCameraModel
-from deep_attention_visual_odometry.solvers.camera_model.lie_rotation import LieRotation
+from deep_attention_visual_odometry.camera_model import SimpleCameraModel
+from deep_attention_visual_odometry.camera_model.lie_rotation import LieRotation
 
 
 class CameraModelParameters(NamedTuple):

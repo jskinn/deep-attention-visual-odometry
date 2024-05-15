@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from deep_attention_visual_odometry.solvers.camera_model import (
+from deep_attention_visual_odometry.camera_model import (
     SimpleCameraModel,
 )
 
