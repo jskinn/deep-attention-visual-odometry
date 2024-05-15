@@ -12,12 +12,12 @@ class SimpleCameraModelFixedGuess(nn.Module):
         self.cx = nn.Parameter(torch.tensor([[0.0]]))
         self.cy = nn.Parameter(torch.tensor([[0.0]]))
         self.orientation = nn.Parameter(
-            torch.tensor([0, 0.0, 0.0])
+            torch.tensor([0.0, 0.0, 0.0])
             .reshape(1, 1, 1, 1, 3)
             .tile(1, 1, num_views, 1, 1)
         )
         translation = torch.zeros(1, 1, num_views, 3)
-        translation[:, :, :, 2] = 10.0
+        translation[:, :, :, 2] = 20.0
         self.translation = nn.Parameter(translation)
         self.world_xy_points = nn.Parameter(torch.randn(1, 1, num_points - 2, 2))
         self.world_z_points = nn.Parameter(torch.randn(1, 1, num_points - 3, 1))

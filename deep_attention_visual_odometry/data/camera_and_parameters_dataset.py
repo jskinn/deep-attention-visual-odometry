@@ -87,12 +87,12 @@ class CameraAndParametersDataset(Dataset[CameraViewsAndPoints]):
         # camera_direction = camera_direction / torch.linalg.vector_norm(
         #     camera_direction, dim=-1, keepdim=True
         # )
-        camera_direction = torch.tensor([0.0, 0.0, -1.0])
+        camera_direction = torch.tensor([0.0, 0.0, -1.0], dtype=torch.float32)
         # up_direction = torch.randn(3, dtype=torch.float32)
         # up_direction = up_direction / torch.linalg.vector_norm(
         #     up_direction, dim=-1, keepdim=True
         # )
-        up_direction = torch.tensor([0.0, -1.0, 0.0])
+        up_direction = torch.tensor([0.0, -1.0, 0.0], dtype=torch.float32)
         camera_distance = (
             self._camera_distance_mean
             + self._camera_distance_std * torch.randn(1, dtype=torch.float32)

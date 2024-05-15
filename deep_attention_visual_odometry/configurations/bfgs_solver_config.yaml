@@ -14,7 +14,7 @@ trainer:
         tags:
           solver: "BFGS"
           camera_model: "simple"
-  max_epochs: 256
+  max_epochs: 30
 #  detect_anomaly: true
 model:
   class_path: deep_attention_visual_odometry.training_modules.CameraOptmisationTrainingModule
@@ -27,11 +27,11 @@ model:
           init_args:
             num_views: 4
             num_points: 8
-            constrain: true
+            constrain: false
         solver:
           class_path: deep_attention_visual_odometry.solvers.BFGSCameraSolver
           init_args:
-            max_iterations: 25
+            max_iterations: 30
             epsilon: 1e-6
             max_step_distance: 1e6
             line_search:
