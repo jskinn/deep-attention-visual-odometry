@@ -28,7 +28,7 @@ model:
       class_path: deep_attention_visual_odometry.networks.simple_camera_bgfs_model.SimpleCameraBGFSModel
       init_args:
         initial_guess:
-          class_path: deep_attention_visual_odometry.camera_model.SimpleCameraModelMLPGuess
+          class_path: deep_attention_visual_odometry.initial_guess.SimpleCameraModelMLPGuess
           init_args:
             num_views: 4
             num_points: 8
