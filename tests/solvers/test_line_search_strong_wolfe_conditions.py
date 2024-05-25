@@ -3,7 +3,7 @@ import torch
 from deep_attention_visual_odometry.solvers.line_search_strong_wolfe_conditions import (
     LineSearchStrongWolfeConditions,
 )
-from deep_attention_visual_odometry.solvers.tests.example_function_distance_to_point import (
+from tests.solvers.example_function_distance_to_point import (
     ExampleFunctionDistanceToPoint,
 )
 
