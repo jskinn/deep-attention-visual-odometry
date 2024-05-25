@@ -23,6 +23,7 @@ trainer:
 model:
   class_path: deep_attention_visual_odometry.training_modules.CameraOptmisationTrainingModule
   init_args:
+    matmul_precision: "highest"
     network:
       class_path: deep_attention_visual_odometry.networks.simple_camera_bgfs_model.SimpleCameraBGFSModel
       init_args:

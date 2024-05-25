@@ -7,7 +7,7 @@ from deep_attention_visual_odometry.base_types import CameraViewsAndPoints
 
 class CameraOptmisationTrainingModule(LightningModule):
     def __init__(
-        self, network: nn.Module, matmul_precision: Literal["medium", "high"] = "high"
+        self, network: nn.Module, matmul_precision: Literal["medium", "high", "highest"] = "high"
     ):
         super().__init__()
         self.network = network
