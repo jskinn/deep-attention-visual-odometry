@@ -27,7 +27,7 @@ class LineSearchStrongWolfeConditions(nn.Module):
                 f"Got c1={sufficient_decrease} and c2={curvature}"
             )
         self.max_step_size = torch.tensor(float(max_step_size))
-        self.widen_iterations = int(math.ceil(math.log2(max_step_size))) + 1
+        self.widen_iterations = int(math.ceil(math.log2(max_step_size)))
         self.zoom_iterations = int(zoom_iterations)
         self.sufficient_decrease = torch.tensor(float(sufficient_decrease))
         self.curvature = torch.tensor(float(curvature))
@@ -236,13 +236,14 @@ class LineSearchStrongWolfeConditions(nn.Module):
                 candidate_function, non_increasing_error
             )
 
-        # If the zooming didn't finish, we want to pick a step anyway
+        # If either algorithm didn't finish, we want to pick a non-zero step anyway
+        unfinished = torch.logical_or(zooming, widening)
         output_function = output_function.masked_update(
-            lower_candidate_function, zooming
+            upper_candidate_function, unfinished
         )
         output_step = torch.where(
-            zooming[:, :, None],
-            lower_alpha[:, None] * search_direction,
+            unfinished[:, :, None],
+            upper_alpha[:, None] * search_direction,
             output_step,
         )
         return output_function, output_step

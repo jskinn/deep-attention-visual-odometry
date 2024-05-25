@@ -1,0 +1,1 @@
+from .init_weights_kaiming_normal import get_kaiming_normal_init_function

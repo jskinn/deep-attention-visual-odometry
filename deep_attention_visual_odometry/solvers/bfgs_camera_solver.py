@@ -24,6 +24,7 @@ class BFGSCameraSolver(nn.Module):
         max_iterations: int,
         epsilon: float,
         max_step_distance: float,
+        min_step_distance: float,
         line_search: nn.Module,
         search_direction_network: IModifySearchDirections | None
     ):
@@ -33,6 +34,7 @@ class BFGSCameraSolver(nn.Module):
         self.max_iterations = int(max_iterations)
         self.epsilon = torch.tensor(float(epsilon))
         self.max_step_distance = float(max_step_distance)
+        self.min_step_distance = float(min_step_distance)
 
     def forward(
         self,
@@ -65,7 +67,7 @@ class BFGSCameraSolver(nn.Module):
                 search_direction = search_direction.squeeze(-1)
             # Clamp the search direction. In practice, sometimes there are extreme gradients,
             # And if the inverse hessian is not sufficiently converged yet, we may end up stepping much too far
-            search_direction = clamp_search_direction(search_direction, self.max_step_distance)
+            search_direction = clamp_search_direction(search_direction, self.max_step_distance, self.min_step_distance)
             # Allow a learned component to modify the search direction
             if self.search_direction_network is not None:
                 parameters = function.as_parameters_vector()
@@ -93,13 +95,17 @@ class BFGSCameraSolver(nn.Module):
         return function
 
 
-def clamp_search_direction(search_direction: torch.Tensor, max_step_length: float) -> torch.Tensor:
+def clamp_search_direction(search_direction: torch.Tensor, max_step_length: float, min_step_length: float) -> torch.Tensor:
     """
     Make sure the search direction is not too large.
     """
     largest_step = search_direction.abs().max(dim=-1).values.clamp(min=1e-8)
     is_too_large = (largest_step > max_step_length)
-    scale = torch.where(is_too_large, max_step_length / largest_step, torch.ones_like(largest_step))
+    is_too_small = (largest_step < min_step_length)
+    scale = torch.ones_like(largest_step)
+    scale[is_too_large] = max_step_length / largest_step[is_too_large]
+    scale[is_too_small] = min_step_length / largest_step[is_too_small]
+    # scale = torch.where(is_too_large, max_step_length / largest_step, torch.ones_like(largest_step))
     scale = scale.clamp(min=1e-16)
     search_direction = scale[:, :, None] * search_direction
     return search_direction

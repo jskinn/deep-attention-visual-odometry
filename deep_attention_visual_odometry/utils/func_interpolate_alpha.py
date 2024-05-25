@@ -18,12 +18,13 @@ class InterpolateAlpha(torch.autograd.Function):
         value_diff = value_2 - value_1
         inv_gradient = (alpha_2 - alpha_1) / value_diff
         candidate_alpha = alpha_1 - value_1 * inv_gradient
-        # Fall back to bisection if the gradients were the same, or the candidate is outside our range
+        # Fall back to bisection if the gradients were the same, the candidate is outside our range,
+        # or the candidate is too close to the bounds
         non_linear_alpha = torch.logical_or(
             torch.eq(value_diff, 0.0),
             torch.logical_or(
-                torch.less(candidate_alpha, min_alpha),
-                torch.greater(candidate_alpha, max_alpha),
+                torch.less(candidate_alpha, min_alpha + 1e-3),
+                torch.greater(candidate_alpha, max_alpha - 1e-3),
             ),
         )
         candidate_alpha[non_linear_alpha] = (

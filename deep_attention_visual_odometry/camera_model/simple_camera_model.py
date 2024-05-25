@@ -53,7 +53,7 @@ class SimpleCameraModel(IOptimisableFunction):
         :param cy: BxE (fixed for all views)
         :param translation: BxExMx3
         :param orientation: BxExMx3
-        :param world_points: BxExNx3 (fixed for all views)
+        :param world_points: BxEx(N - 2)x3 (fixed for all views)
         :param true_projected_points: BxMxNx2
         :param visibility_mask: BxMxN Whether or not a given point appears within a view.
         Missing points have their error ignored.
