@@ -3,8 +3,8 @@ import torch.nn as nn
 from deep_attention_visual_odometry.networks.weights import (
     get_kaiming_normal_init_function,
 )
-from .simple_camera_model import SimpleCameraModel
-from .lie_rotation import LieRotation
+from deep_attention_visual_odometry.camera_model.pinhole_camera_model_least_squares import PinholeCameraModelLeastSquares
+from deep_attention_visual_odometry.geometry.lie_rotation import LieRotation
 
 
 class SimpleCameraModelMLPGuess(nn.Module):
@@ -44,7 +44,7 @@ class SimpleCameraModelMLPGuess(nn.Module):
 
     def forward(
         self, projected_points: torch.Tensor, visibility_mask: torch.Tensor
-    ) -> SimpleCameraModel:
+    ) -> PinholeCameraModelLeastSquares:
         batch_size = projected_points.size(0)
         x = projected_points.reshape(batch_size, -1)
         x = self.estimator(x)
@@ -76,7 +76,7 @@ class SimpleCameraModelMLPGuess(nn.Module):
         ).view(batch_size, 1, self.num_points - 2, 1)
         xy_points = x[:, z_end:xy_end].view(batch_size, 1, self.num_points - 2, 2)
         world_points = torch.cat([xy_points, z_points], dim=3)
-        return SimpleCameraModel(
+        return PinholeCameraModelLeastSquares(
             focal_length=focal_length,
             cx=cx,
             cy=cy,

@@ -3,10 +3,10 @@ import torch
 
 from deep_attention_visual_odometry.solvers import IOptimisableFunction
 from deep_attention_visual_odometry.utils import masked_merge_tensors
-from .lie_rotation import LieRotation
+from deep_attention_visual_odometry.geometry.lie_rotation import LieRotation
 
 
-class SimpleCameraModel(IOptimisableFunction):
+class PinholeCameraModelLeastSquares(IOptimisableFunction):
     """
     Given a set of points across multiple views,
     jointly optimise for the 3D positions of the points, the camera intrinsics, and extrinsics.

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from .simple_camera_model import SimpleCameraModel
-from .lie_rotation import LieRotation
+from deep_attention_visual_odometry.camera_model.pinhole_camera_model_least_squares import PinholeCameraModelLeastSquares
+from deep_attention_visual_odometry.geometry.lie_rotation import LieRotation
 
 
 class SimpleCameraModelFixedGuess(nn.Module):
@@ -22,7 +22,7 @@ class SimpleCameraModelFixedGuess(nn.Module):
         self.world_xy_points = nn.Parameter(torch.randn(1, 1, num_points - 2, 2))
         self.world_z_points = nn.Parameter(torch.randn(1, 1, num_points - 3, 1))
 
-    def forward(self, projected_points: torch.Tensor, visibility_mask: torch.Tensor) -> SimpleCameraModel:
+    def forward(self, projected_points: torch.Tensor, visibility_mask: torch.Tensor) -> PinholeCameraModelLeastSquares:
         batch_size = projected_points.size(0)
         focal_length = self.focal_length.tile(batch_size, 1)
         cx = self.cx.tile(batch_size, 1)
@@ -45,7 +45,7 @@ class SimpleCameraModelFixedGuess(nn.Module):
         )
         world_points = torch.cat([self.world_xy_points, z_points], dim=-1)
         world_points = world_points.tile(batch_size, 1, 1, 1)
-        return SimpleCameraModel(
+        return PinholeCameraModelLeastSquares(
             focal_length=focal_length,
             cx=cx,
             cy=cy,
