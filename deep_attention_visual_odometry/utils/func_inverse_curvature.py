@@ -8,7 +8,7 @@ class InverseCurvature(torch.autograd.Function):
     def forward(step: torch.Tensor, delta_gradient: torch.Tensor) -> torch.Tensor:
         curvature = torch.sum(step * delta_gradient, dim=-1, keepdim=True)
         inv_curvature = 1.0 / curvature
-        inv_curvature[curvature <= 0.0] = 0.0
+        inv_curvature[curvature <= 1e-3] = 0.0
         return inv_curvature
 
     @staticmethod

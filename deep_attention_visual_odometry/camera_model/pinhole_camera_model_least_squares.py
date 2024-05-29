@@ -39,9 +39,10 @@ class PinholeCameraModelLeastSquares(IOptimisableFunction):
         world_points: torch.Tensor,
         true_projected_points: torch.Tensor,
         visibility_mask: torch.Tensor,
-        minimum_distance: float = 1e-5,
-        maximum_pixel_ratio: float = 1e3,
+        minimum_distance: float = 1e-3,
+        maximum_pixel_ratio: float = 5.0,
         constrain: bool = False,
+        max_gradient: float = -1.0,
         _error: torch.Tensor | None = None,
         _gradient: torch.Tensor | None = None,
         _error_mask: torch.Tensor | None = None,
@@ -68,6 +69,7 @@ class PinholeCameraModelLeastSquares(IOptimisableFunction):
         self.minimum_distance = float(minimum_distance)
         self.maximum_pixel_ratio = 1.0 / abs(float(maximum_pixel_ratio))
         self._constrain = bool(constrain)
+        self._max_gradient = float(max_gradient)
         self._num_views = true_projected_points.size(1)
         self._num_points = true_projected_points.size(2)
         self._num_estimates = focal_length.size(1)
@@ -191,10 +193,12 @@ class PinholeCameraModelLeastSquares(IOptimisableFunction):
                 focal_length=self._focal_length,
                 orientation_gradients=orientation_gradients,
                 rotated_vector_gradients=rotation_gradients,
+                max_gradient=self._max_gradient,
             )
-            self._gradient = _stack_gradients(
+            gradient = _stack_gradients(
                 residuals_u, residuals_v, partial_derivatives
             )
+            self._gradient = gradient
             self._gradient_mask = None
         elif self._gradient_mask is not None:
             to_update = torch.logical_not(self._gradient_mask)
@@ -237,6 +241,7 @@ class PinholeCameraModelLeastSquares(IOptimisableFunction):
                 focal_length=focal_length,
                 orientation_gradients=orientation_gradients,
                 rotated_vector_gradients=rotation_gradients,
+                max_gradient=self._max_gradient,
             )
             gradient = _stack_gradients(residuals_u, residuals_v, partial_derivatives)
             self._gradient = self._gradient.masked_scatter(
@@ -302,7 +307,7 @@ class PinholeCameraModelLeastSquares(IOptimisableFunction):
         new_cy = self._cy + parameters[:, :, self.CY]
         if self._constrain:
             # Apply constraints to the camera parameters
-            new_focal_length = new_focal_length.clamp(min=self.maximum_pixel_ratio)
+            new_focal_length = new_focal_length.clamp(min=self.maximum_pixel_ratio, max=1e3)
             new_cx = new_cx.clamp(min=-1.0, max=1.0)
             new_cy = new_cy.clamp(min=-1.0, max=1.0)
         return type(self)(
@@ -316,6 +321,7 @@ class PinholeCameraModelLeastSquares(IOptimisableFunction):
             visibility_mask=self._visibility_mask,
             minimum_distance=self.minimum_distance,
             constrain=self._constrain,
+            max_gradient=self._max_gradient
         )
 
     def masked_update(self, other: Self, mask: torch.Tensor) -> Self:
@@ -366,6 +372,7 @@ class PinholeCameraModelLeastSquares(IOptimisableFunction):
             visibility_mask=self._visibility_mask,
             minimum_distance=self.minimum_distance,
             constrain=self._constrain,
+            max_gradient=self._max_gradient,
             _error=error,
             _error_mask=error_mask,
             _gradient=gradient,
@@ -493,90 +500,101 @@ def _compute_gradient_from_intermediates(
     focal_length: torch.Tensor,
     orientation_gradients: torch.Tensor,
     rotated_vector_gradients: torch.Tensor,
+    max_gradient: float = 1e5
 ) -> _CameraGradients:
     """
     Compute the gradient of the error
     :param x_prime: BxExMxN
     :param y_prime: BxExMxN
-    :param z_prime: BxExMxN
+    :param z_prime: BxExMxN, assumed strictly positive
     :param focal_length: BxE
     :param orientation_gradients: BxExMxNx3x3
     :param rotated_vector_gradients: BxExMx3x3
+    :param max_gradient: Maximum gradient value, assumed positive
     :return:
     """
     while focal_length.ndim < z_prime.ndim:
         focal_length = focal_length.unsqueeze(-1)
-    f_on_z_prime = focal_length / z_prime
-    x_on_z_prime = x_prime / z_prime
-    y_on_z_prime = y_prime / z_prime
-    du_dxprime = f_on_z_prime
-    dv_dyprime = f_on_z_prime
-    du_dzprime = -f_on_z_prime * x_on_z_prime  # = -f x / z^2
-    dv_dzprime = -f_on_z_prime * y_on_z_prime
+    # The ratio f/z must be constrained prior to calculation,
+    # since z may be small and f may be large.
+    # The gradient w.r.t. z is -f/z^2, which can grow out of proportion.
+    # z on its own should not be less than 1e-3, which caps the gradient for
+    # inv_z_prime at -1e6.
+    # We also choose a scale factor to try and uniformly scale the gradient vector.
+    inv_z_prime = 1.0 / z_prime
+    scale_factor = (max_gradient * inv_z_prime).clip(max=1.0)
+    max_focal_length_multiple = (max_gradient / focal_length).abs()
+    f_on_z_prime = focal_length * inv_z_prime.clip(min=-max_focal_length_multiple, max=max_focal_length_multiple)
+    x_on_z_prime = x_prime * inv_z_prime
+    y_on_z_prime = y_prime * inv_z_prime
+    du_dxprime = (scale_factor * f_on_z_prime).clip(min=-max_gradient, max=max_gradient)
+    dv_dyprime = (scale_factor * f_on_z_prime).clip(min=-max_gradient, max=max_gradient)
+    du_dzprime = (-scale_factor * f_on_z_prime * x_on_z_prime).clip(min=-max_gradient, max=max_gradient)  # = -f x / z^2
+    dv_dzprime = (-scale_factor * f_on_z_prime * y_on_z_prime).clip(min=-max_gradient, max=max_gradient)
 
     # Camera parameter derivatives are fairly simple, cx and cy are ones/zeros
-    partial_du_df = x_on_z_prime
-    partial_dv_df = y_on_z_prime
+    partial_du_df = (scale_factor * x_on_z_prime).clip(min=-max_gradient, max=max_gradient)
+    partial_dv_df = (scale_factor * y_on_z_prime).clip(min=-max_gradient, max=max_gradient)
 
     # Translation parameters are also fairly simple
     # Note that ty does not affect u and tx does not affect v
-    partial_du_dtx = du_dxprime
-    partial_dv_dty = dv_dyprime
-    partial_du_dtz = du_dzprime
-    partial_dv_dtz = dv_dzprime
+    partial_du_dtx = (scale_factor * du_dxprime).clip(min=-max_gradient, max=max_gradient)
+    partial_dv_dty = (scale_factor * dv_dyprime).clip(min=-max_gradient, max=max_gradient)
+    partial_du_dtz = (scale_factor * du_dzprime).clip(min=-max_gradient, max=max_gradient)
+    partial_dv_dtz = (scale_factor * dv_dzprime).clip(min=-max_gradient, max=max_gradient)
 
     # The rotation derivatives
-    partial_du_da = (
+    partial_du_da = (scale_factor * (
         du_dxprime * orientation_gradients[:, :, :, :, 0, 0]
         + du_dzprime * orientation_gradients[:, :, :, :, 2, 0]
-    )
-    partial_du_db = (
+    )).clip(min=-max_gradient, max=max_gradient)
+    partial_du_db = (scale_factor * (
         du_dxprime * orientation_gradients[:, :, :, :, 0, 1]
         + du_dzprime * orientation_gradients[:, :, :, :, 2, 1]
-    )
-    partial_du_dc = (
+    )).clip(min=-max_gradient, max=max_gradient)
+    partial_du_dc = (scale_factor * (
         du_dxprime * orientation_gradients[:, :, :, :, 0, 2]
         + du_dzprime * orientation_gradients[:, :, :, :, 2, 2]
-    )
-    partial_dv_da = (
+    )).clip(min=-max_gradient, max=max_gradient)
+    partial_dv_da = (scale_factor * (
         dv_dyprime * orientation_gradients[:, :, :, :, 1, 0]
         + dv_dzprime * orientation_gradients[:, :, :, :, 2, 0]
-    )
-    partial_dv_db = (
+    )).clip(min=-max_gradient, max=max_gradient)
+    partial_dv_db = (scale_factor * (
         dv_dyprime * orientation_gradients[:, :, :, :, 1, 1]
         + dv_dzprime * orientation_gradients[:, :, :, :, 2, 1]
-    )
-    partial_dv_dc = (
+    )).clip(min=-max_gradient, max=max_gradient)
+    partial_dv_dc = (scale_factor * (
         dv_dyprime * orientation_gradients[:, :, :, :, 1, 2]
         + dv_dzprime * orientation_gradients[:, :, :, :, 2, 2]
-    )
+    )).clip(min=-max_gradient, max=max_gradient)
 
     # Lastly, the gradients for the world points
     # These are again chain rule patterns
-    partial_du_dx = (
+    partial_du_dx = (scale_factor * (
         du_dxprime * rotated_vector_gradients[:, :, :, :, 0, 0]
         + du_dzprime * rotated_vector_gradients[:, :, :, :, 2, 0]
-    )
-    partial_dv_dx = (
+    )).clip(min=-max_gradient, max=max_gradient)
+    partial_dv_dx = (scale_factor * (
         dv_dyprime * rotated_vector_gradients[:, :, :, :, 1, 0]
         + dv_dzprime * rotated_vector_gradients[:, :, :, :, 2, 0]
-    )
-    partial_du_dy = (
+    )).clip(min=-max_gradient, max=max_gradient)
+    partial_du_dy = (scale_factor * (
         du_dxprime * rotated_vector_gradients[:, :, :, :, 0, 1]
         + dv_dzprime * rotated_vector_gradients[:, :, :, :, 2, 1]
-    )
-    partial_dv_dy = (
+    )).clip(min=-max_gradient, max=max_gradient)
+    partial_dv_dy = (scale_factor * (
         dv_dyprime * rotated_vector_gradients[:, :, :, :, 1, 1]
         + dv_dzprime * rotated_vector_gradients[:, :, :, :, 2, 1]
-    )
-    partial_du_dz = (
+    )).clip(min=-max_gradient, max=max_gradient)
+    partial_du_dz = (scale_factor * (
         du_dxprime * rotated_vector_gradients[:, :, :, :, 0, 2]
         + du_dzprime * rotated_vector_gradients[:, :, :, :, 2, 2]
-    )
-    partial_dv_dz = (
+    )).clip(min=-max_gradient, max=max_gradient)
+    partial_dv_dz = (scale_factor * (
         dv_dyprime * rotated_vector_gradients[:, :, :, :, 1, 2]
         + dv_dzprime * rotated_vector_gradients[:, :, :, :, 2, 2]
-    )
+    )).clip(min=-max_gradient, max=max_gradient)
 
     return _CameraGradients(
         partial_du_df=partial_du_df,

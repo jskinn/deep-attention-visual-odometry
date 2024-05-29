@@ -13,6 +13,7 @@ class SimpleCameraModelMLPGuess(nn.Module):
         num_views: int,
         num_points: int,
         constrain: bool,
+        max_gradient: float = -1.0,
         num_hidden: int = -1,
         init_weights: bool = False,
     ):
@@ -20,6 +21,7 @@ class SimpleCameraModelMLPGuess(nn.Module):
         self.num_views = num_views
         self.num_points = num_points
         self.constrain = bool(constrain)
+        self.max_gradient = float(max_gradient)
         if num_hidden < 0:
             num_hidden = 8 * num_views * num_points
         self.estimator = nn.Sequential(
@@ -86,4 +88,5 @@ class SimpleCameraModelMLPGuess(nn.Module):
             true_projected_points=projected_points,
             visibility_mask=visibility_mask,
             constrain=self.constrain,
+            max_gradient=self.max_gradient,
         )

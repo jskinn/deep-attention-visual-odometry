@@ -14,8 +14,9 @@ trainer:
         tags:
           solver: "BFGS"
           camera_model: "simple"
-  max_epochs: 30
+  max_epochs: 50
 #  detect_anomaly: true
+  num_sanity_val_steps: 0
   callbacks:
     class_path: lightning.pytorch.callbacks.ModelSummary
     init_args:
@@ -32,15 +33,16 @@ model:
           init_args:
             num_views: 4
             num_points: 8
-            constrain: false
+            constrain: true
+            max_gradient: 1e3
             init_weights: true
         solver:
           class_path: deep_attention_visual_odometry.solvers.BFGSCameraSolver
           init_args:
-            max_iterations: 30
+            max_iterations: 10
             epsilon: 1e-6
-            max_step_distance: 1e4
-            min_step_distance: 1e-4
+            max_step_distance: 1e3
+            min_step_distance: 1e-3
             line_search:
               class_path: deep_attention_visual_odometry.solvers.line_search_strong_wolfe_conditions.LineSearchStrongWolfeConditions
               init_args:
