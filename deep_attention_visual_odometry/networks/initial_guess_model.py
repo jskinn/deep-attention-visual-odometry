@@ -5,18 +5,16 @@ from deep_attention_visual_odometry.camera_model import (
 )
 
 
-class SimpleCameraBGFSModel(nn.Module):
+class InitialGuessModel(nn.Module):
     def __init__(
         self,
         initial_guess: nn.Module,
-        solver: nn.Module,
     ):
         super().__init__()
         self.initial_guess = initial_guess
-        self.solver = solver
 
-    def forward(self, projected_points: torch.Tensor, visiblity_mask: torch.Tensor) -> PinholeCameraModelLeastSquares:
-        # projected_points = projected_points.unsqueeze(1)
+    def forward(
+        self, projected_points: torch.Tensor, visiblity_mask: torch.Tensor
+    ) -> PinholeCameraModelLeastSquares:
         initial_guess = self.initial_guess(projected_points, visiblity_mask)
-        solution = self.solver(initial_guess)
-        return solution
+        return initial_guess

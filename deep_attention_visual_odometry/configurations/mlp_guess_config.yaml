@@ -5,16 +5,15 @@ trainer:
     - class_path: lightning.pytorch.loggers.TensorBoardLogger
       init_args:
         save_dir: "lightning_logs"
-        name: "bgfs_solver_mlp_guess"
+        name: "mlp_guess"
     - class_path: lightning.pytorch.loggers.MLFlowLogger
       init_args:
         experiment_name: "camera solvers"
-        run_name: "bfgs solver mlp guess"
+        run_name: "mlp guess"
         tracking_uri: "http://localhost:8080"
         tags:
-          solver: "BFGS"
+          solver: "None"
           camera_model: "pinhole"
-          solver_loss: "l2"
   max_epochs: 50
 #  detect_anomaly: true
   num_sanity_val_steps: 0
@@ -27,7 +26,7 @@ model:
   init_args:
     matmul_precision: "highest"
     network:
-      class_path: deep_attention_visual_odometry.networks.GuessAndSolverModel
+      class_path: deep_attention_visual_odometry.networks.InitialGuessModel
       init_args:
         initial_guess:
           class_path: deep_attention_visual_odometry.initial_guess.SimpleCameraModelMLPGuess
@@ -37,20 +36,6 @@ model:
             constrain: true
             max_gradient: 1e3
             init_weights: true
-        solver:
-          class_path: deep_attention_visual_odometry.solvers.BFGSCameraSolver
-          init_args:
-            max_iterations: 10
-            epsilon: 1e-6
-            max_step_distance: 1e3
-            min_step_distance: 1e-3
-            line_search:
-              class_path: deep_attention_visual_odometry.solvers.line_search_strong_wolfe_conditions.LineSearchStrongWolfeConditions
-              init_args:
-                max_step_size: 1e5
-                zoom_iterations: 20
-                sufficient_decrease: 1e-4
-                curvature: 0.9
 data:
   class_path: deep_attention_visual_odometry.data_modules.CameraViewDataModule
   init_args:
