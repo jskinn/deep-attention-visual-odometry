@@ -32,7 +32,7 @@ model:
       class_path: deep_attention_visual_odometry.networks.GuessAndSolverModel
       init_args:
         initial_guess:
-          class_path: deep_attention_visual_odometry.initial_guess.SimpleCameraModelMLPGuess
+          class_path: deep_attention_visual_odometry.initial_guess.PinholeCameraModelMLPGuess
           init_args:
             num_views: 4
             num_points: 8

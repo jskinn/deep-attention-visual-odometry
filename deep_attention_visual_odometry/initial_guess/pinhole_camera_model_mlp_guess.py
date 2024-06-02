@@ -4,27 +4,45 @@ import torch.nn as nn
 from deep_attention_visual_odometry.networks.weights import (
     get_kaiming_normal_init_function,
 )
-from deep_attention_visual_odometry.camera_model.pinhole_camera_model_least_squares import PinholeCameraModelLeastSquares
+from deep_attention_visual_odometry.camera_model.pinhole_camera_model_least_squares import (
+    PinholeCameraModelLeastSquares,
+)
 from deep_attention_visual_odometry.geometry.lie_rotation import LieRotation
+from .base_pinhole_camera_model_guess import BasePinholeCameraModelGuess
 
 
-class SimpleCameraModelMLPGuess(nn.Module):
+class PinholeCameraModelMLPGuess(BasePinholeCameraModelGuess):
     def __init__(
         self,
         num_views: int,
         num_points: int,
-        constrain: bool,
-        max_gradient: float = -1.0,
         num_hidden: int = -1,
         init_weights: bool = False,
-        float_precision: Literal["32", "64"] = "32"
+        float_precision: Literal["32", "64"] = "32",
+        constrain: bool = True,
+        max_gradient: float = -1.0,
+        minimum_z_distance: float = 1e-3,
+        maximum_pixel_ratio: float = 5.0,
+        enable_error_gradients: bool = True,
+        enable_grad_gradients: bool = False,
     ):
-        super().__init__()
+        super().__init__(
+            constrain=constrain,
+            max_gradient=max_gradient,
+            minimum_z_distance=minimum_z_distance,
+            maximum_pixel_ratio=maximum_pixel_ratio,
+            enable_error_gradients=enable_error_gradients,
+            enable_grad_gradients=enable_grad_gradients,
+        )
         dtype = torch.float64 if float_precision == "64" else torch.float32
         self.num_views = num_views
         self.num_points = num_points
         self.constrain = bool(constrain)
         self.max_gradient = float(max_gradient)
+        self.minimum_z_distance = float(minimum_z_distance)
+        self.maximum_pixel_ratio = float(maximum_pixel_ratio)
+        self.enable_error_gradients = bool(enable_error_gradients)
+        self.enable_grad_gradiens = bool(enable_grad_gradients)
         if num_hidden < 0:
             num_hidden = 8 * num_views * num_points
         self.estimator = nn.Sequential(
@@ -35,7 +53,7 @@ class SimpleCameraModelMLPGuess(nn.Module):
                 num_hidden,
                 3 + 6 * num_views + 2 * (num_points - 2) + (num_points - 3),
                 bias=True,
-                dtype=dtype
+                dtype=dtype,
             ),
         )
         if init_weights:
@@ -82,15 +100,14 @@ class SimpleCameraModelMLPGuess(nn.Module):
         ).view(batch_size, 1, self.num_points - 2, 1)
         xy_points = x[:, z_end:xy_end].view(batch_size, 1, self.num_points - 2, 2)
         world_points = torch.cat([xy_points, z_points], dim=3)
-        return PinholeCameraModelLeastSquares(
+
+        return self._build_model(
             focal_length=focal_length,
             cx=cx,
             cy=cy,
             orientation=LieRotation(orientation),
             translation=translation,
             world_points=world_points,
-            true_projected_points=projected_points,
+            projected_points=projected_points,
             visibility_mask=visibility_mask,
-            constrain=self.constrain,
-            max_gradient=self.max_gradient,
         )

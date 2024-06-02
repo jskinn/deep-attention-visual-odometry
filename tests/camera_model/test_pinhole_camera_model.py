@@ -345,7 +345,7 @@ def test_camera_projection_clips_negative_z_to_minimum_distance():
         true_projected_points=torch.tensor(expected_points + expected_error).reshape(
             1, 1, 4, 2
         ),
-        minimum_distance=minimum_distance,
+        minimum_z_distance=minimum_distance,
     )
     error = camera_model.get_error()
     assert error.shape == (1, 1)
