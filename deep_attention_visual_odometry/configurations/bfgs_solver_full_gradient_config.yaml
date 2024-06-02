@@ -16,6 +16,7 @@ trainer:
           camera_model: "pinhole"
           solver_loss: "l2"
           precision: "64bit"
+          gradient_scheme: "full"
   max_epochs: 50
 #  detect_anomaly: true
   num_sanity_val_steps: 0

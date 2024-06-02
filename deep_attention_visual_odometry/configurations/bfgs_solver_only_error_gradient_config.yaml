@@ -41,20 +41,20 @@ model:
             max_gradient: 1e3
             init_weights: true
             float_precision: "32"
-            maximum_pixel_ratio: 20.0
+            maximum_pixel_ratio: 5.0
             enable_grad_gradients: false
         solver:
           class_path: deep_attention_visual_odometry.solvers.BFGSCameraSolver
           init_args:
-            max_iterations: 20
+            max_iterations: 5
             epsilon: 1e-6
             max_step_distance: 1e3
             min_step_distance: 1e-3
             line_search:
               class_path: deep_attention_visual_odometry.solvers.line_search_strong_wolfe_conditions.LineSearchStrongWolfeConditions
               init_args:
-                max_step_size: 1e5
-                zoom_iterations: 20
+                max_step_size: 32
+                zoom_iterations: 5
                 sufficient_decrease: 1e-4
                 curvature: 0.9
 data:
