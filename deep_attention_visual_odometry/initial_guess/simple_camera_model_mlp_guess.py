@@ -1,3 +1,4 @@
+from typing import Literal
 import torch
 import torch.nn as nn
 from deep_attention_visual_odometry.networks.weights import (
@@ -16,8 +17,10 @@ class SimpleCameraModelMLPGuess(nn.Module):
         max_gradient: float = -1.0,
         num_hidden: int = -1,
         init_weights: bool = False,
+        float_precision: Literal["32", "64"] = "32"
     ):
         super().__init__()
+        dtype = torch.float64 if float_precision == "64" else torch.float32
         self.num_views = num_views
         self.num_points = num_points
         self.constrain = bool(constrain)
@@ -25,13 +28,14 @@ class SimpleCameraModelMLPGuess(nn.Module):
         if num_hidden < 0:
             num_hidden = 8 * num_views * num_points
         self.estimator = nn.Sequential(
-            nn.Linear(2 * num_views * num_points, num_hidden, bias=True),
+            nn.Linear(2 * num_views * num_points, num_hidden, bias=True, dtype=dtype),
             nn.GELU(),
-            nn.BatchNorm1d(num_hidden, affine=False),
+            nn.BatchNorm1d(num_hidden, affine=False, dtype=dtype),
             nn.Linear(
                 num_hidden,
                 3 + 6 * num_views + 2 * (num_points - 2) + (num_points - 3),
                 bias=True,
+                dtype=dtype
             ),
         )
         if init_weights:

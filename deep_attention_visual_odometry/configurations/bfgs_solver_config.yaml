@@ -15,6 +15,7 @@ trainer:
           solver: "BFGS"
           camera_model: "pinhole"
           solver_loss: "l2"
+          precision: "64bit"
   max_epochs: 50
 #  detect_anomaly: true
   num_sanity_val_steps: 0
@@ -26,6 +27,7 @@ model:
   class_path: deep_attention_visual_odometry.training_modules.CameraOptmisationTrainingModule
   init_args:
     matmul_precision: "highest"
+    float_precision: "64"
     network:
       class_path: deep_attention_visual_odometry.networks.GuessAndSolverModel
       init_args:
@@ -37,6 +39,7 @@ model:
             constrain: true
             max_gradient: 1e3
             init_weights: true
+            float_precision: "64"
         solver:
           class_path: deep_attention_visual_odometry.solvers.BFGSCameraSolver
           init_args:

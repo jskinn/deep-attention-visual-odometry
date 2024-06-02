@@ -7,11 +7,13 @@ from deep_attention_visual_odometry.base_types import CameraViewsAndPoints
 
 class CameraOptmisationTrainingModule(LightningModule):
     def __init__(
-        self, network: nn.Module, matmul_precision: Literal["medium", "high", "highest"] = "high"
+        self, network: nn.Module, matmul_precision: Literal["medium", "high", "highest"] = "high",
+            float_precision: Literal["32", "64"] = "32"
     ):
         super().__init__()
         self.network = network
         self.loss_fn = nn.MSELoss(reduction="mean")
+        self.float_precision = float_precision
         torch.set_float32_matmul_precision(matmul_precision)
 
     def training_step(self, batch: CameraViewsAndPoints, batch_idx):
@@ -29,13 +31,21 @@ class CameraOptmisationTrainingModule(LightningModule):
         step_name: str = "Training",
         log_weights: bool = False,
     ):
-        predictions = self.network(batch.projected_points, batch.visibility_mask)
+        projected_points = batch.projected_points
+        visibility_mask = batch.visibility_mask
+        camera_intrinsics = batch.camera_intrinsics
+        if self.float_precision == "64":
+            projected_points = projected_points.to(torch.float64)
+            visibility_mask = visibility_mask.to(torch.float64)
+            camera_intrinsics = camera_intrinsics.to(torch.float64)
+
+        predictions = self.network(projected_points, visibility_mask)
         error = predictions.get_error().mean()
         focal_length_loss = self.loss_fn(
-            predictions.focal_length[:, 0], batch.camera_intrinsics[:, 0]
+            predictions.focal_length[:, 0], camera_intrinsics[:, 0]
         )
-        cx_loss = self.loss_fn(predictions.cx[:, 0], batch.camera_intrinsics[:, 1])
-        cy_loss = self.loss_fn(predictions.cy[:, 0], batch.camera_intrinsics[:, 2])
+        cx_loss = self.loss_fn(predictions.cx[:, 0], camera_intrinsics[:, 1])
+        cy_loss = self.loss_fn(predictions.cy[:, 0], camera_intrinsics[:, 2])
         self.log(f"{step_name} mean error ", error)
         self.log(f"{step_name} focal length loss", focal_length_loss)
         self.log(f"{step_name} cx loss", cx_loss)
