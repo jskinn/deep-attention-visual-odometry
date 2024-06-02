@@ -1,0 +1,69 @@
+seed_everything: 1415926535
+trainer:
+  logger:
+    # Note: Pytorch lightning uses the first logger to determine the trainers "log_dir".
+    - class_path: lightning.pytorch.loggers.TensorBoardLogger
+      init_args:
+        save_dir: "lightning_logs"
+        name: "bgfs_solver_mlp_guess"
+    - class_path: lightning.pytorch.loggers.MLFlowLogger
+      init_args:
+        experiment_name: "camera solvers"
+        run_name: "bfgs solver mlp guess no gradient grad"
+        tracking_uri: "http://localhost:8080"
+        tags:
+          solver: "BFGS"
+          camera_model: "pinhole"
+          solver_loss: "l2"
+          precision: "32bit"
+          gradient_scheme: "error_only"
+  max_epochs: 50
+#  detect_anomaly: true
+  num_sanity_val_steps: 0
+  callbacks:
+    class_path: lightning.pytorch.callbacks.ModelSummary
+    init_args:
+      max_depth: 5
+model:
+  class_path: deep_attention_visual_odometry.training_modules.CameraOptmisationTrainingModule
+  init_args:
+    matmul_precision: "high"
+    float_precision: "32"
+    network:
+      class_path: deep_attention_visual_odometry.networks.GuessAndSolverModel
+      init_args:
+        initial_guess:
+          class_path: deep_attention_visual_odometry.initial_guess.PinholeCameraModelMLPGuess
+          init_args:
+            num_views: 4
+            num_points: 8
+            constrain: true
+            max_gradient: 1e3
+            init_weights: true
+            float_precision: "32"
+            maximum_pixel_ratio: 20.0
+            enable_grad_gradients: false
+        solver:
+          class_path: deep_attention_visual_odometry.solvers.BFGSCameraSolver
+          init_args:
+            max_iterations: 20
+            epsilon: 1e-6
+            max_step_distance: 1e3
+            min_step_distance: 1e-3
+            line_search:
+              class_path: deep_attention_visual_odometry.solvers.line_search_strong_wolfe_conditions.LineSearchStrongWolfeConditions
+              init_args:
+                max_step_size: 1e5
+                zoom_iterations: 20
+                sufficient_decrease: 1e-4
+                curvature: 0.9
+data:
+  class_path: deep_attention_visual_odometry.data_modules.CameraViewDataModule
+  init_args:
+    batch_size: 64
+    num_workers: 12
+    num_points: 8
+    num_views: 4
+    training_batches: 128
+    validation_batches: 16
+    test_batches: 16

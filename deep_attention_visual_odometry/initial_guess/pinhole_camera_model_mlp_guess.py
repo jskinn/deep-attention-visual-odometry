@@ -37,12 +37,6 @@ class PinholeCameraModelMLPGuess(BasePinholeCameraModelGuess):
         dtype = torch.float64 if float_precision == "64" else torch.float32
         self.num_views = num_views
         self.num_points = num_points
-        self.constrain = bool(constrain)
-        self.max_gradient = float(max_gradient)
-        self.minimum_z_distance = float(minimum_z_distance)
-        self.maximum_pixel_ratio = float(maximum_pixel_ratio)
-        self.enable_error_gradients = bool(enable_error_gradients)
-        self.enable_grad_gradiens = bool(enable_grad_gradients)
         if num_hidden < 0:
             num_hidden = 8 * num_views * num_points
         self.estimator = nn.Sequential(
