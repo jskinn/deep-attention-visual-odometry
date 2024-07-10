@@ -3,7 +3,7 @@ import torch.nn as nn
 from .i_optimisable_function import IOptimisableFunction
 
 
-class TransformerSolver(nn.Module):
+class MLPSolver(nn.Module):
     """
     Based on the BFGS algorithm, optimise a solution in a fixed number of steps.
     Each step picks a search direction for each estimate, evaluates the functions in those directions,
@@ -38,9 +38,9 @@ class TransformerSolver(nn.Module):
         return result
 
 
-class RecurrentTransformerSolver(nn.Module):
+class RecurrentMLPSolver(nn.Module):
     """
-    A variant of the transformer solver using the same set of weights for each step.
+    A variant of the MLP solver using the same set of weights for each step.
     """
 
     def __init__(
@@ -90,10 +90,16 @@ class MLPSolverStep(nn.Module):
             nn.Linear(num_parameters + 2, search_direction_hidden),
             nn.GELU(),
             nn.BatchNorm1d(search_direction_hidden),
+            nn.Linear(search_direction_hidden, search_direction_hidden),
+            nn.GELU(),
+            nn.BatchNorm1d(search_direction_hidden),
             nn.Linear(search_direction_hidden, num_parameters),
         )
         self.line_search_network = nn.Sequential(
             nn.Linear(2 * num_parameters + 4, line_search_hidden),
+            nn.GELU(),
+            nn.BatchNorm1d(line_search_hidden),
+            nn.Linear(line_search_hidden, line_search_hidden),
             nn.GELU(),
             nn.BatchNorm1d(line_search_hidden),
             nn.Linear(line_search_hidden, 1),
@@ -121,9 +127,9 @@ class MLPSolverStep(nn.Module):
         parameters_mean = function_parameters.mean(dim=1, keepdim=True)
         parameters_std = function_parameters.std(dim=1, keepdim=True).clamp(min=1e-8)
         function_parameters = (function_parameters - parameters_mean) / parameters_std
-        error = function.get_error()
-        inv_error = 1.0 / error.clamp(min=1e-8)
-        candidate_inputs = torch.cat([function_parameters, error, inv_error], dim=-1)
+        candidate_error = candidate.get_error()
+        inv_candidate_error = 1.0 / error.clamp(min=1e-8)
+        candidate_inputs = torch.cat([inputs, function_parameters, candidate_error, inv_candidate_error], dim=-1)
         # Transform the current and candidate parameters and error to work out how far to go in the search direction
         step_sizes = self.line_search_network(
             torch.cat([inputs, candidate_inputs], dim=1)
