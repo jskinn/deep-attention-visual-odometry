@@ -6,7 +6,7 @@ from deep_attention_visual_odometry.utils import masked_merge_tensors
 from deep_attention_visual_odometry.geometry.lie_rotation import LieRotation
 
 
-class PinholeCameraModelLeastSquares(IOptimisableFunction):
+class PinholeCameraModelL1(IOptimisableFunction):
     """
     Given a set of points across multiple views,
     jointly optimise for the 3D positions of the points, the camera intrinsics, and extrinsics.
@@ -143,7 +143,7 @@ class PinholeCameraModelLeastSquares(IOptimisableFunction):
             v_residuals = v - self._true_projected_points[:, None, :, :, 1]
             u_residuals = u_residuals * self._visibility_mask[:, None, :, :]
             v_residuals = v_residuals * self._visibility_mask[:, None, :, :]
-            self._error = (self._error_scale * u_residuals.square()).sum(
+            self._error = (self._error_scale * u_residuals.abs()).sum(
                 dim=(-2, -1)
             ) + (self._error_scale * v_residuals.square()).sum(dim=(-2, -1))
             self._error_mask = None
@@ -168,9 +168,9 @@ class PinholeCameraModelLeastSquares(IOptimisableFunction):
             u_residuals = u_residuals * visibility_mask
             v_residuals = v_residuals * visibility_mask
             new_error = (
-                self._error_scale * u_residuals.square()
+                self._error_scale * u_residuals.abs()
             ).sum(dim=(-2, -1)) + (
-                self._error_scale * v_residuals.square()
+                self._error_scale * v_residuals.abs()
             ).sum(
                 dim=(-2, -1)
             )
@@ -198,14 +198,12 @@ class PinholeCameraModelLeastSquares(IOptimisableFunction):
                 v = v.detach()
 
             residuals_u = (
-                2.0
-                * self._error_scale * self._visibility_mask[:, None, :, :]
-                * (u - self._true_projected_points[:, None, :, :, 0])
+                self._error_scale * self._visibility_mask[:, None, :, :]
+                * (u - self._true_projected_points[:, None, :, :, 0]).sign()
             )
             residuals_v = (
-                2.0
-                * self._error_scale * self._visibility_mask[:, None, :, :]
-                * (v - self._true_projected_points[:, None, :, :, 1])
+                self._error_scale * self._visibility_mask[:, None, :, :]
+                * (v - self._true_projected_points[:, None, :, :, 1]).sign()
             )
 
             partial_derivatives = _compute_gradient_from_intermediates(
@@ -251,10 +249,10 @@ class PinholeCameraModelLeastSquares(IOptimisableFunction):
             )
             rotation_gradients = orientation.vector_gradient()
             residuals_u = (
-                2.0 * self._error_scale * visibility_mask * (u - true_projected_points[:, :, :, :, 0])
+                self._error_scale * visibility_mask * (u - true_projected_points[:, :, :, :, 0]).sign()
             )
             residuals_v = (
-                2.0 * self._error_scale * visibility_mask * (v - true_projected_points[:, :, :, :, 1])
+                self._error_scale * visibility_mask * (v - true_projected_points[:, :, :, :, 1]).sign()
             )
             partial_derivatives = _compute_gradient_from_intermediates(
                 x_prime=camera_relative_points[:, :, :, :, 0],

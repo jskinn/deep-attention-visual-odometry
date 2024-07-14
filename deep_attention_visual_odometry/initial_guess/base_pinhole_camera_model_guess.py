@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 import torch
 import torch.nn as nn
-from deep_attention_visual_odometry.camera_model.pinhole_camera_model_least_squares import (
-    PinholeCameraModelLeastSquares,
+from deep_attention_visual_odometry.camera_model.pinhole_camera_model_l1 import (
+    PinholeCameraModelL1,
 )
 from deep_attention_visual_odometry.geometry.lie_rotation import LieRotation
 
@@ -32,7 +32,7 @@ class BasePinholeCameraModelGuess(nn.Module, ABC):
     @abstractmethod
     def forward(
         self, projected_points: torch.Tensor, visibility_mask: torch.Tensor
-    ) -> PinholeCameraModelLeastSquares:
+    ) -> PinholeCameraModelL1:
         pass
 
     def _get_num_model_parameters(self) -> int:
@@ -50,8 +50,8 @@ class BasePinholeCameraModelGuess(nn.Module, ABC):
         world_points: torch.Tensor,
         projected_points: torch.Tensor,
         visibility_mask: torch.Tensor,
-    ) -> PinholeCameraModelLeastSquares:
-        return PinholeCameraModelLeastSquares(
+    ) -> PinholeCameraModelL1:
+        return PinholeCameraModelL1(
             focal_length=focal_length,
             cx=cx,
             cy=cy,

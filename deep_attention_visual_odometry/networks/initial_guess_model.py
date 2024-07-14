@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from deep_attention_visual_odometry.camera_model import (
-    PinholeCameraModelLeastSquares,
+    PinholeCameraModelL1,
 )
 
 
@@ -15,6 +15,6 @@ class InitialGuessModel(nn.Module):
 
     def forward(
         self, projected_points: torch.Tensor, visiblity_mask: torch.Tensor
-    ) -> PinholeCameraModelLeastSquares:
+    ) -> PinholeCameraModelL1:
         initial_guess = self.initial_guess(projected_points, visiblity_mask)
         return initial_guess

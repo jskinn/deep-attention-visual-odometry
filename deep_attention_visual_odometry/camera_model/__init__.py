@@ -1,2 +1,2 @@
 from .i_camera_model import ICameraModel
-from .pinhole_camera_model_least_squares import PinholeCameraModelLeastSquares
+from .pinhole_camera_model_l1 import PinholeCameraModelL1

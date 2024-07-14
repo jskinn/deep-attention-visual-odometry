@@ -3,7 +3,7 @@ import math
 import pytest
 import torch
 import torch.nn as nn
-from deep_attention_visual_odometry.camera_model import PinholeCameraModelLeastSquares
+from deep_attention_visual_odometry.camera_model import PinholeCameraModelL1
 from deep_attention_visual_odometry.geometry.lie_rotation import LieRotation
 
 
@@ -22,7 +22,9 @@ class CameraModelParameters(NamedTuple):
 
 @pytest.fixture()
 def models_and_mask() -> (
-    tuple[PinholeCameraModelLeastSquares, PinholeCameraModelLeastSquares, torch.Tensor, PinholeCameraModelLeastSquares]
+    tuple[
+        PinholeCameraModelL1, PinholeCameraModelL1, torch.Tensor, PinholeCameraModelL1
+    ]
 ):
     focal_length = torch.tensor([340, 600])
     cx = torch.tensor([320, 420])
@@ -67,7 +69,7 @@ def models_and_mask() -> (
         ],
         dim=2,
     ).reshape(2, 1, 4, 2)
-    camera_model_1 = PinholeCameraModelLeastSquares(
+    camera_model_1 = PinholeCameraModelL1(
         focal_length=torch.tensor([[focal_length[0]], [focal_length[0]]]),
         cx=torch.tensor([[cx[0]], [cx[0]]]),
         cy=torch.tensor([[cy[0]], [cy[0]]]),
@@ -77,8 +79,9 @@ def models_and_mask() -> (
         ),
         world_points=point[0, :, :].reshape(1, 1, 2, 3).tile(2, 1, 1, 1),
         true_projected_points=true_projected_points,
+        visibility_mask=torch.ones_like(expected_u),
     )
-    camera_model_2 = PinholeCameraModelLeastSquares(
+    camera_model_2 = PinholeCameraModelL1(
         focal_length=torch.tensor([[focal_length[1]], [focal_length[1]]]),
         cx=torch.tensor([[cx[1]], [cx[1]]]),
         cy=torch.tensor([[cy[1]], [cy[1]]]),
@@ -88,9 +91,10 @@ def models_and_mask() -> (
         ),
         world_points=point[1, :, :].reshape(1, 1, 2, 3).tile(2, 1, 1, 1),
         true_projected_points=true_projected_points,
+        visibility_mask=torch.ones_like(expected_u),
     )
     update_mask = torch.tensor([[False], [True]])
-    camera_model_3 = PinholeCameraModelLeastSquares(
+    camera_model_3 = PinholeCameraModelL1(
         focal_length=torch.tensor([[focal_length[0]], [focal_length[1]]]),
         cx=torch.tensor([[cx[0]], [cx[1]]]),
         cy=torch.tensor([[cy[0]], [cy[1]]]),
@@ -98,6 +102,7 @@ def models_and_mask() -> (
         orientation=LieRotation((axis * angle).reshape(2, 1, 1, 1, 3)),
         world_points=point.reshape(2, 1, 2, 3),
         true_projected_points=true_projected_points,
+        visibility_mask=torch.ones_like(expected_u),
     )
     return camera_model_1, camera_model_2, update_mask, camera_model_3
 
@@ -200,27 +205,151 @@ def project_points(
     return expected_points
 
 
+# ------------------ TESTS ------------------
+
+
 def test_num_parameters_scales_with_num_views_and_num_points():
     batch_size = 3
     num_estimates = 7
     num_views = 5
     num_points = 11
-    camera_model = PinholeCameraModelLeastSquares(
+    camera_model = PinholeCameraModelL1(
         focal_length=340 * torch.ones(batch_size, num_estimates),
         cx=320 * torch.ones(batch_size, num_estimates),
         cy=240 * torch.ones(batch_size, num_estimates),
         translation=torch.tensor([-1.0, 2.0, -0.3])
         .reshape(1, 1, 1, 3)
         .tile(batch_size, num_estimates, num_views, 1),
-        orientation=LieRotation(torch.zeros(batch_size, num_estimates, num_views, 3)),
+        orientation=LieRotation(
+            torch.zeros(batch_size, num_estimates, num_views, 1, 3)
+        ),
         world_points=torch.tensor(
             list(range(batch_size * num_estimates * num_points * 3))
         ).reshape(batch_size, num_estimates, num_points, 3),
         true_projected_points=torch.tensor(
             list(range(batch_size * num_views * num_points * 2))
         ).reshape(batch_size, num_views, num_points, 2),
+        visibility_mask=torch.ones(batch_size, num_views, num_points, dtype=torch.bool),
     )
     assert camera_model.num_parameters == 3 + 6 * num_views + 3 * num_points - 7
+
+
+def test_get_world_points_returns_augmented_world_points():
+    batch_size = 3
+    num_estimates = 7
+    num_views = 5
+    num_points = 11
+    world_points = torch.tensor(
+        list(range(batch_size * num_estimates * (num_points - 2) * 3))
+    ).reshape(batch_size, num_estimates, num_points - 2, 3)
+    camera_model = PinholeCameraModelL1(
+        focal_length=340 * torch.ones(batch_size, num_estimates),
+        cx=320 * torch.ones(batch_size, num_estimates),
+        cy=240 * torch.ones(batch_size, num_estimates),
+        translation=torch.tensor([-1.0, 2.0, -0.3])
+        .reshape(1, 1, 1, 3)
+        .tile(batch_size, num_estimates, num_views, 1),
+        orientation=LieRotation(
+            torch.zeros(batch_size, num_estimates, num_views, 1, 3)
+        ),
+        world_points=world_points,
+        true_projected_points=torch.tensor(
+            list(range(batch_size * num_views * num_points * 2))
+        ).reshape(batch_size, num_views, num_points, 2),
+        visibility_mask=torch.ones(batch_size, num_views, num_points, dtype=torch.bool),
+    )
+    output = camera_model._get_world_points()
+    assert output.shape == (batch_size, num_estimates, num_points, 3)
+    # The upper diagonal of the matrix should be 0, basically.
+    # The x coordinate of the first point should also be 1
+    assert torch.all(output[:, :, 0, :] == 0.0)
+    assert torch.all(output[:, :, 1, 0] == 1.0)
+    assert torch.all(output[:, :, 1, 1:] == 0.0)
+    assert torch.equal(output[:, :, 2, 0:2], world_points[:, :, 0, 0:2])
+    assert torch.all(output[:, :, 2, 2] == 0.0)
+    assert torch.equal(output[:, :, 3:, :], world_points[:, :, 1:, :])
+
+
+def test_get_camera_relative_points_returns_world_points_relative_to_cameras():
+    batch_size = 3
+    num_estimates = 7
+    num_views = 5
+    num_points = 11
+    # Pick world points that are different for each batch and estimate,
+    # but the first point is the smallest
+    world_points = (
+        torch.tensor(list(range(batch_size * num_estimates * (num_points - 2) * 3)))
+        .to(torch.float32)
+        .reshape(num_points - 2, 3, batch_size, num_estimates)
+        .permute(2, 3, 0, 1)
+        / 10
+    )
+    # Translate each view a bit, mostly in the positive Z.
+    # The model does some clamping around Z, so if the value is too large, or Z too small, we might hit that.
+    translation = torch.tensor(
+        [
+            [
+                0.1 * (idx - num_views // 2),
+                0.15 * (num_views // 2 - idx),
+                0.22 * idx + 9.7,
+            ]
+            for idx in range(batch_size * num_estimates * num_views)
+        ]
+    ).reshape(batch_size, num_estimates, num_views, 3)
+    # Rotate around the Z axis, different rotations per view.
+    # This doesn't change the Z coordinate, keeps it positive
+    orientation = (
+        torch.tensor(
+            [[0.0, 0.0, idx * math.pi / (num_views + 1)] for idx in range(num_views)]
+        )
+        .reshape(1, 1, 5, 1, 3)
+        .tile((batch_size, num_estimates, 1, 1, 1))
+    )
+    camera_model = PinholeCameraModelL1(
+        focal_length=340 * torch.ones(batch_size, num_estimates),
+        cx=320 * torch.ones(batch_size, num_estimates),
+        cy=240 * torch.ones(batch_size, num_estimates),
+        translation=translation,
+        orientation=LieRotation(orientation),
+        world_points=world_points,
+        true_projected_points=torch.tensor(
+            list(range(batch_size * num_views * num_points * 2))
+        ).reshape(batch_size, num_views, num_points, 2),
+        visibility_mask=torch.ones(batch_size, num_views, num_points, dtype=torch.bool),
+    )
+    output = camera_model._get_camera_relative_points()
+    assert output.shape == (batch_size, num_estimates, num_views, num_points, 3)
+    # The first camera relative point is 0,0,0 + translation
+    assert torch.equal(output[:, :, :, 0, :], translation)
+    # The second point is rotated(1,0,0) + translation = -cos(theta), 0, 0 + translation
+    assert torch.equal(
+        torch.cat(
+            [
+                torch.cos(orientation[:, :, :, 0, 2:3]),
+                torch.sin(orientation[:, :, :, 0, 2:3]),
+                torch.zeros(batch_size, num_estimates, num_views, 1),
+            ],
+            dim=-1,
+        )
+        + translation,
+        output[:, :, :, 1, :],
+    )
+    # For the rest of the points, reverse the expected transformation.
+    # This introduces some floating point error.
+    original_points = output - translation.unsqueeze(-2)
+    inv_orientation = LieRotation(-1.0 * orientation)
+    original_points = inv_orientation.rotate_vector(original_points)
+    assert torch.all(
+        torch.isclose(
+            original_points[:, :, :, 2, 0:2],
+            world_points[:, :, 0:1, 0:2].tile((1, 1, num_views, 1)),
+            atol=2e-7,
+        )
+    )
+    assert torch.all(torch.isclose(original_points[:, :, :, 2, 2], torch.tensor(0.0)))
+    assert torch.all(
+        torch.isclose(original_points[:, :, :, 3:, :], world_points[:, :, None, 1:, :])
+    )
 
 
 def test_get_error_return_shape():
@@ -228,7 +357,7 @@ def test_get_error_return_shape():
     num_estimates = 7
     num_views = 5
     num_points = 11
-    camera_model = PinholeCameraModelLeastSquares(
+    camera_model = PinholeCameraModelL1(
         focal_length=340 * torch.ones(batch_size, num_estimates),
         cx=320 * torch.ones(batch_size, num_estimates),
         cy=240 * torch.ones(batch_size, num_estimates),
@@ -246,12 +375,13 @@ def test_get_error_return_shape():
         true_projected_points=torch.tensor(
             list(range(batch_size * num_views * num_points * 2))
         ).reshape(batch_size, num_views, num_points, 2),
+        visibility_mask=torch.ones(batch_size, num_views, num_points, dtype=torch.bool),
     )
     error = camera_model.get_error()
     assert error.shape == (batch_size, num_estimates)
 
 
-def test_get_error_returns_square_error_between_estimated_and_true_projected_points():
+def test_get_error_returns_absolute_error_between_estimated_and_true_projected_points():
     focal_length = 340
     cx = 320
     cy = 240
@@ -282,7 +412,8 @@ def test_get_error_returns_square_error_between_estimated_and_true_projected_poi
             [2.2, 8.7],
         ]
     )
-    camera_model = PinholeCameraModelLeastSquares(
+    error_scale = math.sqrt(1.0 / (1 * 4))
+    camera_model = PinholeCameraModelL1(
         focal_length=torch.tensor([[focal_length]]),
         cx=torch.tensor([[cx]]),
         cy=torch.tensor([[cy]]),
@@ -290,12 +421,13 @@ def test_get_error_returns_square_error_between_estimated_and_true_projected_poi
         orientation=LieRotation(angle * axis.reshape(1, 1, 1, 1, 3)),
         world_points=world_points.reshape(1, 1, 2, 3),
         true_projected_points=(expected_points + expected_error).reshape(1, 1, 4, 2),
+        visibility_mask=torch.ones(1, 1, 4, dtype=torch.bool),
     )
     error = camera_model.get_error()
     assert error.shape == (1, 1)
     assert torch.isclose(
         error[0, 0],
-        expected_error.square().sum(),
+        error_scale * expected_error.abs().sum(),
     )
 
 
@@ -335,7 +467,7 @@ def test_camera_projection_clips_negative_z_to_minimum_distance():
             [2.2, 8.7],
         ]
     )
-    camera_model = PinholeCameraModelLeastSquares(
+    camera_model = PinholeCameraModelL1(
         focal_length=torch.tensor([[focal_length]]),
         cx=torch.tensor([[cx]]),
         cy=torch.tensor([[cy]]),
@@ -345,6 +477,7 @@ def test_camera_projection_clips_negative_z_to_minimum_distance():
         true_projected_points=torch.tensor(expected_points + expected_error).reshape(
             1, 1, 4, 2
         ),
+        visibility_mask=torch.ones(1, 1, 4, dtype=torch.bool),
         minimum_z_distance=minimum_distance,
     )
     error = camera_model.get_error()
@@ -360,7 +493,7 @@ def test_get_error_caches_returned_tensor():
     num_estimates = 7
     num_views = 5
     num_points = 11
-    camera_model = PinholeCameraModelLeastSquares(
+    camera_model = PinholeCameraModelL1(
         focal_length=340 * torch.ones(batch_size, num_estimates),
         cx=320 * torch.ones(batch_size, num_estimates),
         cy=240 * torch.ones(batch_size, num_estimates),
@@ -380,6 +513,7 @@ def test_get_error_caches_returned_tensor():
         true_projected_points=torch.tensor(
             list(range(batch_size * num_views * num_points * 2))
         ).reshape(batch_size, num_views, num_points, 2),
+        visibility_mask=torch.ones(batch_size, num_views, num_points, dtype=torch.bool),
     )
     error = camera_model.get_error()
     error2 = camera_model.get_error()
@@ -457,7 +591,7 @@ def test_get_gradient_return_shape():
     num_estimates = 7
     num_views = 5
     num_points = 11
-    camera_model = PinholeCameraModelLeastSquares(
+    camera_model = PinholeCameraModelL1(
         focal_length=340 * torch.ones(batch_size, num_estimates),
         cx=320 * torch.ones(batch_size, num_estimates),
         cy=240 * torch.ones(batch_size, num_estimates),
@@ -477,6 +611,7 @@ def test_get_gradient_return_shape():
         true_projected_points=torch.tensor(
             list(range(batch_size * num_views * num_points * 2))
         ).reshape(batch_size, num_views, num_points, 2),
+        visibility_mask=torch.ones(batch_size, num_views, num_points, dtype=torch.bool),
     )
     gradient = camera_model.get_gradient()
     assert gradient.shape == (batch_size, num_estimates, camera_model.num_parameters)
@@ -505,7 +640,7 @@ def test_gradient_is_zero_for_correct_estimate():
         translation=translation,
         world_points=world_points,
     )
-    camera_model = PinholeCameraModelLeastSquares(
+    camera_model = PinholeCameraModelL1(
         focal_length=torch.tensor([[focal_length]]),
         cx=torch.tensor([[cx]]),
         cy=torch.tensor([[cy]]),
@@ -513,6 +648,7 @@ def test_gradient_is_zero_for_correct_estimate():
         orientation=LieRotation(angle * axis.reshape(1, 1, 1, 1, 3)),
         world_points=world_points.reshape(1, 1, 2, 3),
         true_projected_points=expected_points.reshape(1, 1, 4, 2),
+        visibility_mask=torch.ones(1, 1, 4, dtype=torch.bool),
     )
     gradient = camera_model.get_gradient()
     assert gradient.shape == (1, 1, 14)
@@ -526,7 +662,7 @@ def test_cx_gradient_is_high_if_incorrect(
     num_points = example_camera_model_params.num_points
     wrong_cx = 300
     expected_num_params = 3 + 6 * num_views + 3 * num_points - 7
-    camera_model = PinholeCameraModelLeastSquares(
+    camera_model = PinholeCameraModelL1(
         focal_length=torch.tensor([[example_camera_model_params.focal_length]]),
         cx=torch.tensor([[wrong_cx]]),
         cy=torch.tensor([[example_camera_model_params.cy]]),
@@ -544,6 +680,7 @@ def test_cx_gradient_is_high_if_incorrect(
         true_projected_points=example_camera_model_params.expected_points.reshape(
             1, num_views, num_points, 2
         ),
+        visibility_mask=torch.ones(1, num_views, num_points, dtype=torch.bool),
     )
     gradient = camera_model.get_gradient()
     assert gradient.shape == (1, 1, expected_num_params)
@@ -557,7 +694,7 @@ def test_cy_gradient_is_high_if_incorrect(
     num_points = example_camera_model_params.num_points
     wrong_cy = 260
     expected_num_params = 3 + 6 * num_views + 3 * num_points - 7
-    camera_model = PinholeCameraModelLeastSquares(
+    camera_model = PinholeCameraModelL1(
         focal_length=torch.tensor([[example_camera_model_params.focal_length]]),
         cx=torch.tensor([[example_camera_model_params.cx]]),
         cy=torch.tensor([[wrong_cy]]),
@@ -575,6 +712,7 @@ def test_cy_gradient_is_high_if_incorrect(
         true_projected_points=example_camera_model_params.expected_points.reshape(
             1, num_views, num_points, 2
         ),
+        visibility_mask=torch.ones(1, num_views, num_points, dtype=torch.bool),
     )
     gradient = camera_model.get_gradient()
     assert gradient.shape == (1, 1, expected_num_params)
@@ -588,7 +726,7 @@ def test_fx_gradient_is_high_if_incorrect(
     num_points = example_camera_model_params.num_points
     wrong_focal_length = 260
     expected_num_params = 3 + 6 * num_views + 3 * num_points - 7
-    camera_model = PinholeCameraModelLeastSquares(
+    camera_model = PinholeCameraModelL1(
         focal_length=torch.tensor([[wrong_focal_length]]),
         cx=torch.tensor([[example_camera_model_params.cx]]),
         cy=torch.tensor([[example_camera_model_params.cy]]),
@@ -606,6 +744,7 @@ def test_fx_gradient_is_high_if_incorrect(
         true_projected_points=example_camera_model_params.expected_points.reshape(
             1, num_views, num_points, 2
         ),
+        visibility_mask=torch.ones(1, num_views, num_points, dtype=torch.bool),
     )
     gradient = camera_model.get_gradient()
     assert gradient.shape == (1, 1, expected_num_params)
@@ -622,7 +761,7 @@ def test_orientation_x_gradient_is_high_if_incorrect(
     ).clone()
     wrong_rotations[:, 0] = wrong_rotations[:, 0] + 0.3
     expected_num_params = 3 + 6 * num_views + 3 * num_points - 7
-    camera_model = PinholeCameraModelLeastSquares(
+    camera_model = PinholeCameraModelL1(
         focal_length=torch.tensor([[example_camera_model_params.focal_length]]),
         cx=torch.tensor([[example_camera_model_params.cx]]),
         cy=torch.tensor([[example_camera_model_params.cy]]),
@@ -636,6 +775,7 @@ def test_orientation_x_gradient_is_high_if_incorrect(
         true_projected_points=example_camera_model_params.expected_points.reshape(
             1, num_views, num_points, 2
         ),
+        visibility_mask=torch.ones(1, num_views, num_points, dtype=torch.bool),
     )
     gradient = camera_model.get_gradient()
     assert gradient.shape == (1, 1, expected_num_params)
@@ -674,7 +814,10 @@ def test_tensor_gradient_passes_from_error_to_inputs():
         .to(torch.float)
         .requires_grad_()
     )
-    camera_model = PinholeCameraModelLeastSquares(
+    visibility_mask = torch.ones(
+        batch_size, num_views, num_points, dtype=torch.bool
+    ).requires_grad_()
+    camera_model = PinholeCameraModelL1(
         focal_length=focal_length,
         cx=cx,
         cy=cy,
@@ -682,6 +825,7 @@ def test_tensor_gradient_passes_from_error_to_inputs():
         orientation=LieRotation(orientation),
         world_points=world_points,
         true_projected_points=true_projected_points,
+        visibility_mask=visibility_mask,
     )
     error = camera_model.get_error()
     assert error.requires_grad is True
@@ -705,7 +849,13 @@ def test_tensor_gradient_passes_from_error_to_inputs():
     assert torch.all(torch.greater(torch.abs(orientation.grad), 0))
     assert world_points.grad is not None
     assert torch.all(torch.isfinite(world_points.grad))
+    assert torch.all(torch.greater(torch.abs(world_points.grad), 0))
+    assert true_projected_points.grad is not None
+    assert torch.all(torch.isfinite(true_projected_points.grad))
     assert torch.all(torch.greater(torch.abs(true_projected_points.grad), 0))
+    assert visibility_mask.grad is not None
+    assert torch.all(torch.isfinite(visibility_mask.grad))
+    assert torch.all(torch.greater(torch.abs(visibility_mask.grad), 0))
 
 
 def test_tensor_gradient_passes_from_gradient_to_inputs():
@@ -740,7 +890,10 @@ def test_tensor_gradient_passes_from_gradient_to_inputs():
         .reshape(batch_size, num_views, num_points, 2)
         .to(torch.float)
     ).requires_grad_()
-    camera_model = PinholeCameraModelLeastSquares(
+    visibility_mask = torch.ones(
+        batch_size, num_views, num_points, dtype=torch.bool
+    ).requires_grad_()
+    camera_model = PinholeCameraModelL1(
         focal_length=focal_length,
         cx=cx,
         cy=cy,
@@ -748,6 +901,7 @@ def test_tensor_gradient_passes_from_gradient_to_inputs():
         orientation=LieRotation(orientation),
         world_points=world_points,
         true_projected_points=true_projected_points,
+        visibility_mask=visibility_mask,
     )
     gradient = camera_model.get_gradient()
     assert gradient.requires_grad is True
@@ -771,7 +925,13 @@ def test_tensor_gradient_passes_from_gradient_to_inputs():
     assert torch.all(torch.greater(torch.abs(orientation.grad), 0))
     assert world_points.grad is not None
     assert torch.all(torch.isfinite(world_points.grad))
+    assert torch.all(torch.greater(torch.abs(world_points.grad), 0))
+    assert true_projected_points.grad is not None
+    assert torch.all(torch.isfinite(true_projected_points.grad))
     assert torch.all(torch.greater(torch.abs(true_projected_points.grad), 0))
+    assert visibility_mask.grad is not None
+    assert torch.all(torch.isfinite(visibility_mask.grad))
+    assert torch.all(torch.greater(torch.abs(visibility_mask.grad), 0))
 
 
 class CameraModule(nn.Module):
@@ -781,7 +941,7 @@ class CameraModule(nn.Module):
         num_estimates = x.size(1)
         num_views = 5
         num_points = 11
-        camera_model = PinholeCameraModelLeastSquares(
+        camera_model = PinholeCameraModelL1(
             focal_length=x,
             cx=3.2 * torch.ones(batch_size, num_estimates),
             cy=2.4 * torch.ones(batch_size, num_estimates),
@@ -801,6 +961,9 @@ class CameraModule(nn.Module):
             true_projected_points=torch.tensor(
                 list(range(batch_size * num_views * num_points * 2))
             ).reshape(batch_size, num_views, num_points, 2),
+            visibility_mask=torch.ones(
+                batch_size, num_views, num_points, dtype=torch.bool
+            ),
         )
         error = camera_model.get_error()
         gradient = camera_model.get_gradient()

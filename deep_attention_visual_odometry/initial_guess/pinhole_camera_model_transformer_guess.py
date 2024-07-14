@@ -5,8 +5,8 @@ import torch.nn as nn
 from deep_attention_visual_odometry.networks.weights import (
     get_kaiming_normal_init_function,
 )
-from deep_attention_visual_odometry.camera_model.pinhole_camera_model_least_squares import (
-    PinholeCameraModelLeastSquares,
+from deep_attention_visual_odometry.camera_model.pinhole_camera_model_l1 import (
+    PinholeCameraModelL1,
 )
 from .base_pinhole_camera_model_guess import BasePinholeCameraModelGuess
 
@@ -88,7 +88,7 @@ class PinholeCameraModelTransformerGuess(BasePinholeCameraModelGuess):
 
     def forward(
         self, projected_points: torch.Tensor, visibility_mask: torch.Tensor
-    ) -> PinholeCameraModelLeastSquares:
+    ) -> PinholeCameraModelL1:
         batch_size = projected_points.size(0)
         x = torch.matmul(projected_points, self.pixel_embedding)
         x = x + self.positional_encoding[None, :, :, :]
