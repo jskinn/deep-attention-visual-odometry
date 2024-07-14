@@ -145,7 +145,7 @@ class PinholeCameraModelL1(IOptimisableFunction):
             v_residuals = v_residuals * self._visibility_mask[:, None, :, :]
             self._error = (self._error_scale * u_residuals.abs()).sum(
                 dim=(-2, -1)
-            ) + (self._error_scale * v_residuals.square()).sum(dim=(-2, -1))
+            ) + (self._error_scale * v_residuals.abs()).sum(dim=(-2, -1))
             self._error_mask = None
         elif self._error_mask is not None:
             u = self._get_u()
