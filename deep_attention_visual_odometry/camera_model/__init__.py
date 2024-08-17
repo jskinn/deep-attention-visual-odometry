@@ -1,1 +1,2 @@
+from .pinhole_camera_model import PinholeCameraModel
 from .pinhole_camera_model_l1 import PinholeCameraModelL1
