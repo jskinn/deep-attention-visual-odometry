@@ -39,8 +39,8 @@ class LieRotation:
         dot_product = (vector * self._lie_vector).sum(dim=-1, keepdims=True)
         cross_product = torch.linalg.cross(self._lie_vector, vector, dim=-1)
         cos_theta = torch.cos(angle)
-        sin_theta_on_theta = sin_x_on_x(angle)
-        one_minus_cos_term = one_minus_cos_x_on_x_squared(angle)
+        sin_theta_on_theta = self.sin_theta_on_theta()
+        one_minus_cos_term = self.one_minus_cos_theta_on_theta_squared()
         out_vector = (
             vector * cos_theta
             + one_minus_cos_term * dot_product * self._lie_vector
@@ -127,6 +127,10 @@ class LieRotation:
         return term_1 + term_2 + term_3 + term_4 + term_5
 
     def vector_gradient(self) -> torch.Tensor:
+        """
+        Get the gradient of a rotated vector w.r.t. the un-rotated vector.
+        :returns:
+        """
         # Gradient is simpler for the vector parameters, partly because they are never
         # in the denominator or inside the sin/cos.
         # Gradient is then the outer product times (1 - cos(x)) / x^2
