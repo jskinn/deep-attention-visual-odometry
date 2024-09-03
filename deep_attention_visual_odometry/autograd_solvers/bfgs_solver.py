@@ -43,12 +43,14 @@ class BFGSSolver(Module):
         curvature: float = 0.9,
         error_threshold: float = 1e-4,
         iterations: int = 1000,
+        minimum_step: float = 1e-8
     ):
         super().__init__()
         self.sufficient_decrease = float(sufficient_decrease)
         self.curvature = float(curvature)
         self.error_threshold = float(error_threshold)
         self.iterations = int(iterations)
+        self.minimum_step = float(minimum_step)
 
     def forward(
         self,
@@ -149,6 +151,9 @@ class BFGSSolver(Module):
             parameters = parameters.masked_scatter(
                 updating.unsqueeze(-1).expand_as(parameters), updating_parameters
             )
+
+            # Stop updating if the step distance is basically zero
+            updating = updating & torch.greater(torch.linalg.vector_norm(step, dim=-1), self.minimum_step)
         if not create_graph:
             parameters = parameters.detach()
         return parameters
@@ -168,6 +173,7 @@ class BFGSSolver(Module):
         denominator = delta_gradient.square().sum(dim=-1, keepdims=True).clamp(min=1e-5)
         scale = (step * delta_gradient).sum(dim=-1, keepdims=True)
         scale = scale / denominator
+        scale = scale.clip(min=1e-4)
         return scale
 
     @staticmethod

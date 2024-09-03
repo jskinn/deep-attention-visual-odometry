@@ -232,6 +232,7 @@ def line_search_wolfe_conditions(
             done_mask | zoom_flipped_mask
         ]
         zooming |= zoom_ordered_mask | zoom_flipped_mask
+        zooming &= (lower_alpha != upper_alpha)     # Simple failure case, where the bounds converge quickly
         widening &= ~(zoom_ordered_mask | done_mask | zoom_flipped_mask)
 
     return upper_alpha

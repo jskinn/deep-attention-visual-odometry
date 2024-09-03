@@ -16,6 +16,7 @@
 # USA
 import pytest
 from unittest.mock import Mock
+import math
 import numpy as np
 import torch
 from torch.nn import Module
@@ -302,6 +303,31 @@ def test_produces_small_change_when_search_direction_is_wrong(
     )
 
     assert torch.isclose(result, torch.tensor(0.0))
+
+
+def test_produces_a_change_even_if_in_a_local_minima(strong_conditions: bool):
+    # Trig functions give repeating local minima
+    # The minima here is taken from wolfram alpha
+    initial_guess = torch.tensor([-13.9922246512961], requires_grad=True)
+
+    def error_function(x: torch.Tensor, _) -> torch.Tensor:
+        distance = torch.linalg.vector_norm(x, dim=-1)
+        return distance.square() * (distance.sin() + 2.0)
+
+    base_error = error_function(initial_guess, True)
+    base_gradient = torch.autograd.grad(base_error.sum(), initial_guess)
+    search_direction = -1.0 * base_gradient[0]
+
+    result = line_search_wolfe_conditions(
+        initial_guess,
+        search_direction,
+        base_error,
+        base_gradient[0],
+        error_function,
+        strong=strong_conditions,
+    )
+
+    assert torch.greater(result, torch.tensor(0.01))
 
 
 def test_does_not_propagate_gradients(strong_conditions: bool) -> None:

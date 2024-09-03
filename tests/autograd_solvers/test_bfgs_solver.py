@@ -14,6 +14,8 @@
 # License along with this library; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301
 # USA
+import math
+
 import numpy as np
 import pytest
 import torch
@@ -23,6 +25,10 @@ from deep_attention_visual_odometry.autograd_solvers.bfgs_solver import BFGSSolv
 
 def square_error(x: torch.Tensor, _: torch.Tensor) -> torch.Tensor:
     return x.square().sum(dim=-1)
+
+
+def offset_square_error(x: torch.Tensor, _: torch.Tensor) -> torch.Tensor:
+    return x.square().sum(dim=-1) + 10.0
 
 
 def log_square_error(x: torch.Tensor, _: torch.Tensor) -> torch.Tensor:
@@ -47,6 +53,15 @@ def test_optimizes_simple_function() -> None:
     solver = BFGSSolver(error_threshold=error_threshold)
     result = solver(initial_guess, square_error)
     final_error = log_square_error(result, torch.tensor(True))
+    assert torch.isclose(final_error, torch.tensor(0.0), atol=error_threshold).all()
+
+
+def test_optimizes_simple_function_with_offset() -> None:
+    error_threshold = 1e-6
+    initial_guess = torch.tensor([1.1, 2.3])
+    solver = BFGSSolver(error_threshold=error_threshold)
+    result = solver(initial_guess, offset_square_error)
+    final_error = square_error(result, torch.tensor(True))
     assert torch.isclose(final_error, torch.tensor(0.0), atol=error_threshold).all()
 
 
@@ -79,22 +94,36 @@ def test_optimizes_cosine_function() -> None:
     assert torch.isclose(final_error, torch.tensor(0.0), atol=error_threshold).all()
 
 
-@pytest.mark.skip("Gets caught")
-def test_optimizes_function_with_many_local_minima() -> None:
+def test_can_get_caught_in_local_minima() -> None:
     error_threshold = 1e-6
+    minima_1 = -10.8060458497138
+    minima_2 = 14.5496166081312
     initial_guess = torch.tensor(
         [
-            [-22.2, -15.8],
             [17.8885, 35.7771],
+            [minima_1 * math.sqrt(2) / 2, minima_1 * math.sqrt(2) / 2],
+            [minima_2 * math.sqrt(2) / 2, -1 * minima_2 * math.sqrt(2) / 2],
+        ]
+    )
+    solver = BFGSSolver(error_threshold=error_threshold)
+    result = solver(initial_guess, x_squared_sine_x_error)
+    assert torch.isclose(result, initial_guess, rtol=0.2).all()
+
+
+def test_can_pass_over_local_minima() -> None:
+    error_threshold = 1e-6
+    minima_1 = 10.8060458497138 + 2.25
+    minima_2 = 14.5496166081312 + 3.0
+    initial_guess = torch.tensor(
+        [
+            [minima_1 * math.sqrt(2) / 2, minima_1 * math.sqrt(2) / 2],
+            [minima_2 * math.sqrt(2) / 2, -1 * minima_2 * math.sqrt(2) / 2],
             [-18.025, 6.0083],
         ]
     )
     solver = BFGSSolver(error_threshold=error_threshold)
     result = solver(initial_guess, x_squared_sine_x_error)
-    final_error = x_squared_sine_x_error(result, torch.tensor(True))
-    assert torch.isclose(
-        final_error, torch.zeros_like(final_error), atol=error_threshold
-    ).all()
+    assert torch.isclose(result, torch.zeros_like(result), atol=math.sqrt(error_threshold)).all()
 
 
 def test_moves_toward_solution_if_iterations_too_low() -> None:
@@ -144,6 +173,49 @@ def test_passes_updating_mask_to_error_fuction(fixed_random_seed: int) -> None:
     assert torch.isclose(result, target_points, atol=error_threshold).all()
 
 
+def test_extra_iterations_only_decrease_error(fixed_random_seed: int) -> None:
+    error_threshold = 1e-6
+    rng = np.random.default_rng(fixed_random_seed)
+    initial_guess = torch.tensor(rng.normal(0.0, 1.0, size=(5,)))
+    prev_error = log_square_error(initial_guess, torch.tensor(True))
+    for num_iterations in range(1, 15):
+        solver = BFGSSolver(error_threshold=error_threshold, iterations=num_iterations)
+        result = solver(initial_guess, log_square_error)
+        result_error = log_square_error(result, torch.tensor(True))
+        assert torch.less_equal(result_error, prev_error)
+        prev_error = result_error
+
+
+def test_fit_plane_with_noise(fixed_random_seed: int) -> None:
+    rng = np.random.default_rng(fixed_random_seed)
+    num_points = 128
+    true_plane = rng.normal(0.0, 1.0, size=(4,))
+    true_plane = true_plane / np.linalg.norm(true_plane[0:3], keepdims=True)
+    np_points = rng.normal(0.0, 15.0, size=(num_points, 3))
+    origin = -1.0 * true_plane[3] * true_plane[0:3]
+    np_points = np_points - origin[None, :]
+    np_points = (
+        np_points - np.dot(np_points, true_plane[0:3])[:, None] * true_plane[None, 0:3]
+    )
+    np_points = np_points + origin[None, :]
+    np_points = np_points + rng.normal(0.0, 0.01, size=(num_points, 3))
+    points = torch.tensor(np_points.reshape(1, num_points, 3))
+
+    def error_function(x: torch.Tensor, update_mask: torch.Tensor) -> torch.Tensor:
+        error = (x[..., 0:3].unsqueeze(-2) * points).sum(dim=-1) + x[..., 3:4]
+        return error.square().sum(dim=-1)
+
+    initial_guess = torch.tensor(rng.normal(0.0, 1.0, size=(4,)))
+    solver = BFGSSolver(error_threshold=1e-6, iterations=500)
+    result = solver(initial_guess, error_function)
+    result = result / torch.linalg.vector_norm(result[..., 0:3], dim=-1, keepdim=True)
+    assert result.shape == initial_guess.shape
+    assert (
+        torch.isclose(result, torch.tensor(true_plane), atol=5e-3).all()
+        or torch.isclose(-1.0 * result, torch.tensor(true_plane), atol=5e-3).all()
+    )
+
+
 def test_passes_through_gradients(fixed_random_seed: int) -> None:
     rng = np.random.default_rng(fixed_random_seed)
     initial_guess = torch.tensor(rng.normal(0.0, 1.0, size=(3, 4)), requires_grad=True)
@@ -155,6 +227,15 @@ def test_passes_through_gradients(fixed_random_seed: int) -> None:
     loss.backward()
     assert initial_guess.grad is not None
     assert torch.all(torch.greater(torch.abs(initial_guess.grad), 0))
+
+
+@pytest.mark.parametrize("requires_grad", [True, False])
+def test_result_requires_grad_matches_input(requires_grad) -> None:
+    error_threshold = 1e-6
+    initial_guess = torch.tensor([1.1, 2.3], requires_grad=requires_grad)
+    solver = BFGSSolver(error_threshold=error_threshold)
+    result = solver(initial_guess, square_error)
+    assert result.requires_grad == requires_grad
 
 
 def test_can_be_compiled(fixed_random_seed) -> None:
