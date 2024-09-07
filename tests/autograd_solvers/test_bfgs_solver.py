@@ -14,6 +14,7 @@
 # License along with this library; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301
 # USA
+from typing import Callable
 import math
 
 import numpy as np
@@ -22,17 +23,20 @@ import torch
 
 from deep_attention_visual_odometry.autograd_solvers.bfgs_solver import BFGSSolver
 
+from .reference_functions import (
+    square_error,
+    log_square_error,
+    rosenbrock_function,
+    rastrigrin_function,
+    beale_function,
+    bukin_function_6,
+    easom_function,
+)
 
-def square_error(x: torch.Tensor, _: torch.Tensor) -> torch.Tensor:
-    return x.square().sum(dim=-1)
 
 
 def offset_square_error(x: torch.Tensor, _: torch.Tensor) -> torch.Tensor:
-    return x.square().sum(dim=-1) + 10.0
-
-
-def log_square_error(x: torch.Tensor, _: torch.Tensor) -> torch.Tensor:
-    return (x.square().sum(dim=-1) + 1.0).log()
+    return square_error(x)+ 10.0
 
 
 def cosine_error(x: torch.Tensor, _: torch.Tensor) -> torch.Tensor:
@@ -184,6 +188,36 @@ def test_extra_iterations_only_decrease_error(fixed_random_seed: int) -> None:
         result_error = log_square_error(result, torch.tensor(True))
         assert torch.less_equal(result_error, prev_error)
         prev_error = result_error
+
+
+@pytest.mark.parametrize(
+    "function,minima,tolerance",
+    [
+        (square_error, torch.zeros(2, dtype=torch.float64), 1e-6),
+        (log_square_error, torch.zeros(2, dtype=torch.float64), 1e-4),
+        (rosenbrock_function, torch.ones(2, dtype=torch.float64), 0.02),
+
+        # TODO: These don't quite work
+        # (beale_function, torch.tensor([3, 0.5], dtype=torch.float64), 1e-4),
+        # (bukin_function_6, torch.tensor([-10.0, 1.0], dtype=torch.float64), 1e-4),
+        # (easom_function, torch.tensor([torch.pi, torch.pi], dtype=torch.float64), 1e-4),
+
+        # gets caught in local minima
+        # (rastrigrin_function, torch.zeros(2, dtype=torch.float64), 0.001),
+    ],
+)
+def test_optimises_reference_functions(
+    fixed_random_seed: int,
+    function: Callable[[torch.Tensor], torch.Tensor],
+    minima: torch.Tensor,
+        tolerance: float,
+) -> None:
+    rng = np.random.default_rng(fixed_random_seed)
+    scale = max(float(minima.abs().max()), 1.0)
+    initial_guess = torch.tensor(rng.normal(0.0, scale, size=(16, minima.size(-1))))
+    solver = BFGSSolver(iterations=2000, error_threshold=1e-8)
+    result = solver(initial_guess, function)
+    assert torch.isclose(result, minima.unsqueeze(0).expand_as(result), atol=tolerance).all()
 
 
 def test_fit_plane_with_noise(fixed_random_seed: int) -> None:
