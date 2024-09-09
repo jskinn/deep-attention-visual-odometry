@@ -153,7 +153,10 @@ class BFGSSolver(Module):
             )
 
             # Stop updating if the step distance is basically zero
+            # This synchronises the GPU.
             updating = updating & torch.greater(torch.linalg.vector_norm(step, dim=-1), self.minimum_step)
+            if not torch.any(updating):
+                break
         if not create_graph:
             parameters = parameters.detach()
         return parameters
