@@ -229,35 +229,33 @@ def test_rotation_and_vector_can_be_jointly_optimised_if_six_degrees_of_freedom_
     assert torch.isclose(result_axes, true_axes, atol=5e-4, rtol=1e-4).all()
 
 
-@pytest.mark.skip("Failing")
-def test_rotation_and_vector_can_be_jointly_optimised_if_vector_and_rotation_norms_are_zero(fixed_random_seed: int):
+# @pytest.mark.skip("Failing")
+def test_rotation_and_vector_can_be_jointly_optimised_with_zero_mean_vectors_and_one_fixed_orientation(fixed_random_seed: int):
     rng = np.random.default_rng(fixed_random_seed)
     num_vectors = 4
     num_rotations = 4
     true_vectors = torch.tensor(rng.normal(0.0, 1.0, size=(1, num_vectors, 3)))
     true_vectors = true_vectors - true_vectors.mean(dim=1, keepdim=True)
+    fixed_axis_angles = torch.tensor(rng.normal(0.0, 1.0, size=(1, 1, 3)))
     true_angles = torch.tensor(rng.uniform(0.0, np.pi, size=(num_rotations, 1, 1)))
     true_axes = torch.tensor(rng.normal(0.0, 1.0, size=(num_rotations, 1, 3)))
     true_axes = true_axes / torch.linalg.vector_norm(true_axes, dim=-1, keepdims=True)
     true_axis_angles = true_angles * true_axes
-    true_axis_angles = true_axis_angles - true_axis_angles.mean(dim=0, keepdim=True)
-    true_rotated_vectors = rotate_vector_axis_angle(true_vectors, true_axis_angles)
-    initial_guess = torch.tensor(rng.normal(0.0, 1.0, size=(num_vectors * 3 + num_vectors * 3)))
+    true_rotated_vectors = rotate_vector_axis_angle(true_vectors, torch.cat([fixed_axis_angles, true_axis_angles], dim=0))
+    initial_guess = torch.tensor(rng.normal(0.0, 1.0, size=(num_vectors * 3 + num_rotations * 3)))
     solver = BFGSSolver(iterations=500)
 
     def error_function(x: torch.Tensor, _: torch.Tensor) -> torch.Tensor:
         vectors = x[0, 0:3 * num_vectors].reshape(1, num_vectors, 3)
         axis_angles = x[0, 3 * num_vectors:3 * (num_vectors + num_rotations)].reshape(num_rotations, 1, 3)
         vectors = vectors - vectors.mean(dim=1, keepdim=True)
-        axis_angles = axis_angles - axis_angles.mean(dim=0, keepdim=True)
-        rotated_vectors = rotate_vector_axis_angle(vectors, axis_angles)
+        rotated_vectors = rotate_vector_axis_angle(vectors, torch.cat([fixed_axis_angles, axis_angles], dim=0))
         return torch.linalg.vector_norm(rotated_vectors - true_rotated_vectors, dim=-1).sum()
 
     result = solver(initial_guess, error_function)
     result_vectors = result[0:3 * num_vectors].reshape(1, num_vectors, 3)
     result_vectors = result_vectors - result_vectors.mean(dim=1, keepdim=True)
     result_axis_angles = result[3 * num_vectors:3 * (num_vectors + num_rotations)].reshape(num_rotations, 1, 3)
-    result_axis_angles = result_axis_angles - result_axis_angles.mean(dim=0, keepdim=True)
     result_angles = torch.linalg.vector_norm(result_axis_angles, dim=-1, keepdim=True)
     result_axes = result_axis_angles / result_angles
     # Rotations are equivalent if we negate the axis and subtract the angle from 2pi
@@ -265,9 +263,62 @@ def test_rotation_and_vector_can_be_jointly_optimised_if_vector_and_rotation_nor
     result_axes[invert_axis] = -1.0 * result_axes[invert_axis]
     result_angles[invert_axis] = 2 * torch.pi - result_angles[invert_axis]
     assert torch.isclose(result_vectors, true_vectors, atol=5e-4, rtol=1e-4).all()
-    assert torch.isclose(result_angles.squeeze(-1), true_angles, atol=5e-4, rtol=1e-4).all()
+    assert torch.isclose(result_angles, true_angles, atol=5e-4, rtol=1e-4).all()
     assert torch.isclose(result_axes, true_axes, atol=5e-4, rtol=1e-4).all()
 
+
+# @pytest.mark.skip("Failing")
+def test_rotation_and_vector_can_be_jointly_optimised_with_translation(fixed_random_seed: int):
+    rng = np.random.default_rng(fixed_random_seed)
+    num_vectors = 4
+    num_views = 4
+    translations_start = 3 * num_vectors
+    rotations_start = translations_start + 3 * num_views
+
+    true_vectors = torch.tensor(rng.normal(0.0, 1.0, size=(1, num_vectors, 3)))
+    true_vectors = true_vectors - true_vectors.mean(dim=1, keepdim=True)
+
+    fixed_axis_angles = torch.zeros((1, 1, 3), dtype=torch.float64)
+    fixed_translations = torch.zeros((1, 1, 3), dtype=torch.float64)
+    true_translations = torch.tensor(rng.normal(0.0, 1.0, size=(num_views, 1, 3)))
+    true_angles = torch.tensor(rng.uniform(0.0, np.pi, size=(num_views, 1, 1)))
+    true_axes = torch.tensor(rng.normal(0.0, 1.0, size=(num_views, 1, 3)))
+    true_axes = true_axes / torch.linalg.vector_norm(true_axes, dim=-1, keepdims=True)
+    true_axis_angles = true_angles * true_axes
+
+    translated_vectors = true_vectors + torch.cat([fixed_translations, true_translations], dim=0)
+    true_rotated_vectors = rotate_vector_axis_angle(translated_vectors, torch.cat([fixed_axis_angles, true_axis_angles], dim=0))
+
+    initial_guess = torch.tensor(rng.normal(0.0, 1.0, size=(num_vectors * 3 + num_views * 6)))
+    solver = BFGSSolver(iterations=500)
+
+    def error_function(x: torch.Tensor, _: torch.Tensor) -> torch.Tensor:
+        vectors = x[0, 0:translations_start].reshape(1, num_vectors, 3)
+        translations = x[0, translations_start:rotations_start].reshape(num_views, 1, 3)
+        axis_angles = x[0, rotations_start:].reshape(num_views, 1, 3)
+
+        vectors = vectors - vectors.mean(dim=1, keepdim=True)
+        vectors = vectors + torch.cat([fixed_translations, translations], dim=0)
+
+        rotated_vectors = rotate_vector_axis_angle(vectors, torch.cat([fixed_axis_angles, axis_angles], dim=0))
+        return torch.linalg.vector_norm(rotated_vectors - true_rotated_vectors, dim=-1).sum()
+
+    result = solver(initial_guess, error_function)
+    result_vectors = result[0:translations_start].reshape(1, num_vectors, 3)
+    result_translations = result[translations_start:rotations_start].reshape(num_views, 1, 3)
+    result_axis_angles = result[rotations_start:].reshape(num_views, 1, 3)
+
+    result_vectors = result_vectors - result_vectors.mean(dim=1, keepdim=True)
+    result_angles = torch.linalg.vector_norm(result_axis_angles, dim=-1, keepdim=True)
+    result_axes = result_axis_angles / result_angles
+    # Rotations are equivalent if we negate the axis and subtract the angle from 2pi
+    invert_axis = (result_angles > torch.pi).squeeze(-1)
+    result_axes[invert_axis] = -1.0 * result_axes[invert_axis]
+    result_angles[invert_axis] = 2 * torch.pi - result_angles[invert_axis]
+    assert torch.isclose(result_vectors, true_vectors, atol=5e-4, rtol=1e-4).all()
+    assert torch.isclose(result_translations, true_translations, atol=5e-4, rtol=1e-4).all()
+    assert torch.isclose(result_angles, true_angles, atol=5e-4, rtol=1e-4).all()
+    assert torch.isclose(result_axes, true_axes, atol=5e-4, rtol=1e-4).all()
 
 
 class CompileModule(Module):
@@ -279,10 +330,8 @@ def test_can_be_compiled(fixed_random_seed: int):
     rng = np.random.default_rng(fixed_random_seed)
     vectors = torch.tensor(rng.normal(0.0, 1.0, size=(8, 3)))
     axis_angles = torch.tensor(rng.normal(0.0, 1.0, size=(8, 3)))
-    intrinsics = torch.tensor([0.787, -0.13, -0.02])
-    point = torch.tensor([1.1, 0.8, 17.3])
-    projection = rotate_vector_axis_angle(point, intrinsics)
+    projection = rotate_vector_axis_angle(vectors, axis_angles)
     module = CompileModule()
     complied_module = torch.compile(module)
-    result = complied_module(point, intrinsics)
+    result = complied_module(vectors, axis_angles)
     assert torch.isclose(result, projection).all()
