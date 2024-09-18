@@ -1,3 +1,19 @@
+# Copyright (C) 2024  John Skinner
+#
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+#
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301
+# USA
 from typing import Any
 import torch
 
@@ -8,7 +24,7 @@ class InverseCurvature(torch.autograd.Function):
     def forward(step: torch.Tensor, delta_gradient: torch.Tensor) -> torch.Tensor:
         curvature = torch.sum(step * delta_gradient, dim=-1, keepdim=True)
         inv_curvature = 1.0 / curvature
-        inv_curvature[curvature <= 1e-3] = 0.0
+        inv_curvature[curvature <= 0.0] = 0.0
         return inv_curvature
 
     @staticmethod

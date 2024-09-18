@@ -193,6 +193,7 @@ class BFGSSolver(Module):
         :param delta_gradient: The change in gradient f(x_{t+1}) - f(x_{t})
         :return: The updated inverse hessian estimate, H_{+}
         """
+        # TODO: Implement instead the damped BFGS update from Nocedal and Wright algorithm 18.2
         # = (H - \frac{1}{y^T s} s y^T H)(I - frac{y s^T}{y^T s^T}) + frac{s s^T}{y^T s}
         # = H - frac{1}{y^T s} H y s^T - \frac{1}{y^T s} s y^T H +
         #   \frac{1}{(y^T s)^2} s y^T H y s^T + frac{s s^T}{y^T s}
