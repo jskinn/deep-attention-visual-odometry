@@ -22,10 +22,11 @@ def project_points_basic_pinhole(
 ) -> torch.Tensor:
     """
     Basic pinhole camera projection, of 3D points using three intrinsics: f, cx, and cy.
-    This function assumes the final dimension
-    :param points: A (Bx)
-    :param intrinsics:
-    :return:
+    This function assumes the final dimension is the relevant one.
+
+    :param points: A (B...)x3 vector of world points to project
+    :param intrinsics: A (B...)x3 vector of camera intrinsics: (fx, cx, cy)
+    :return: A (B..)x2 vector of pixel coordinates of the point in the view.
     """
     focal_length = intrinsics[..., 0:1]
     principal_point = intrinsics[..., 1:3]
