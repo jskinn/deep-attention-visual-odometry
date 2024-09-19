@@ -43,7 +43,7 @@ class BFGSSolver(Module):
         curvature: float = 0.9,
         error_threshold: float = 1e-4,
         iterations: int = 1000,
-        minimum_step: float = 1e-8
+        minimum_step: float = 1e-8,
     ):
         super().__init__()
         self.sufficient_decrease = float(sufficient_decrease)
@@ -67,6 +67,15 @@ class BFGSSolver(Module):
         updating = torch.ones(
             batch_dimensions, dtype=torch.bool, device=parameters.device
         )
+
+        # Wrap the error function so that calls made by the line search reflect the 'updating' mask
+        def __wrap_error_function(
+            inner_parameters: torch.Tensor, inner_mask: torch.Tensor
+        ) -> torch.Tensor:
+            mask = torch.zeros_like(updating)
+            mask[updating] = inner_mask
+            return error_function(inner_parameters, mask)
+
         step = torch.zeros_like(parameters)
         error = torch.empty(
             batch_dimensions, dtype=parameters.dtype, device=parameters.device
@@ -138,7 +147,7 @@ class BFGSSolver(Module):
                 search_direction=search_direction,
                 base_error=updating_error,
                 base_gradient=updating_gradient,
-                error_function=error_function,
+                error_function=__wrap_error_function,
                 sufficient_decrease=self.sufficient_decrease,
                 curvature=self.curvature,
                 strong=True,
@@ -154,7 +163,9 @@ class BFGSSolver(Module):
 
             # Stop updating if the step distance is basically zero
             # This synchronises the GPU.
-            updating = updating & torch.greater(torch.linalg.vector_norm(step, dim=-1), self.minimum_step)
+            updating = updating & torch.greater(
+                torch.linalg.vector_norm(step, dim=-1), self.minimum_step
+            )
             if not torch.any(updating):
                 break
         if not create_graph:
@@ -176,7 +187,7 @@ class BFGSSolver(Module):
         denominator = delta_gradient.square().sum(dim=-1, keepdims=True).clamp(min=1e-5)
         scale = (step * delta_gradient).sum(dim=-1, keepdims=True)
         scale = scale / denominator
-        scale = scale.clip(min=1e-4)
+        scale = scale.clamp(min=1e-4)
         return scale
 
     @staticmethod
@@ -194,6 +205,11 @@ class BFGSSolver(Module):
         :return: The updated inverse hessian estimate, H_{+}
         """
         # TODO: Implement instead the damped BFGS update from Nocedal and Wright algorithm 18.2
+        #       The problem is that most of the modifications use the Hessian rather than the Inverse Hessian.
+        #       See also:
+        #       - On practical modifications of the quasi-Newton BFGS method by M Al-Baali and Lucio Grandinetti
+        #       - Damped techniques for the limited memory BFGS method for large-scale optimization by
+        #         Mehiddin Al-Baali, Lucio Grandinetti, and Ornella Pisacane
         # = (H - \frac{1}{y^T s} s y^T H)(I - frac{y s^T}{y^T s^T}) + frac{s s^T}{y^T s}
         # = H - frac{1}{y^T s} H y s^T - \frac{1}{y^T s} s y^T H +
         #   \frac{1}{(y^T s)^2} s y^T H y s^T + frac{s s^T}{y^T s}

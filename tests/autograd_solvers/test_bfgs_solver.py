@@ -34,9 +34,8 @@ from .reference_functions import (
 )
 
 
-
 def offset_square_error(x: torch.Tensor, _: torch.Tensor) -> torch.Tensor:
-    return square_error(x)+ 10.0
+    return square_error(x) + 10.0
 
 
 def cosine_error(x: torch.Tensor, _: torch.Tensor) -> torch.Tensor:
@@ -127,7 +126,9 @@ def test_can_pass_over_local_minima() -> None:
     )
     solver = BFGSSolver(error_threshold=error_threshold)
     result = solver(initial_guess, x_squared_sine_x_error)
-    assert torch.isclose(result, torch.zeros_like(result), atol=math.sqrt(error_threshold)).all()
+    assert torch.isclose(
+        result, torch.zeros_like(result), atol=math.sqrt(error_threshold)
+    ).all()
 
 
 def test_moves_toward_solution_if_iterations_too_low() -> None:
@@ -159,22 +160,31 @@ def test_handles_batch_dimensions(fixed_random_seed: int) -> None:
     ).all()
 
 
-def test_passes_updating_mask_to_error_fuction(fixed_random_seed: int) -> None:
+def test_passes_updating_mask_to_error_function(fixed_random_seed: int) -> None:
     error_threshold = 1e-6
     rng = np.random.default_rng(fixed_random_seed)
-    target_points = torch.tensor(rng.normal(0.0, 3.0, size=(3, 8, 4)))
-    initial_guess = torch.tensor(rng.normal(0.0, 1.0, size=(3, 8, 4)))
+    shifts = torch.tensor(rng.normal(0.0, 3.0, size=(3, 8, 2)))
+    initial_guess = torch.tensor(rng.normal(0.0, 1.0, size=(3, 8, 2)))
+    got_partial_mask = False
 
     def error_function(x: torch.Tensor, update_mask: torch.Tensor) -> torch.Tensor:
-        if update_mask.shape != target_points.shape[:-1]:
-            update_mask = update_mask.reshape(target_points.shape[:-1])
-        targets = target_points[update_mask]
-        return torch.linalg.vector_norm(x - targets, dim=-1)
+        nonlocal got_partial_mask
+        assert update_mask.shape == (3, 8)
+        assert update_mask.sum() == x.size(0)
+        assert update_mask.any()
+        got_partial_mask |= update_mask.sum() < 3 * 8
+        x = x + shifts[update_mask]
+        num_group_1 = update_mask[0, :].sum()
+        num_group_2 = update_mask[1, :].sum()
+        error_1 = bukin_function_6(x[0:num_group_1, :])
+        error_2 = rosenbrock_function(x[num_group_1 : num_group_1 + num_group_2, :])
+        error_3 = square_error(x[num_group_1 + num_group_2 :])
+        return torch.cat([error_1, error_2, error_3], dim=0)
 
     solver = BFGSSolver(error_threshold=error_threshold)
     result = solver(initial_guess, error_function)
     assert result.shape == initial_guess.shape
-    assert torch.isclose(result, target_points, atol=error_threshold).all()
+    assert got_partial_mask
 
 
 def test_extra_iterations_only_decrease_error(fixed_random_seed: int) -> None:
@@ -196,12 +206,10 @@ def test_extra_iterations_only_decrease_error(fixed_random_seed: int) -> None:
         (square_error, torch.zeros(2, dtype=torch.float64), 1e-6),
         (log_square_error, torch.zeros(2, dtype=torch.float64), 1e-4),
         (rosenbrock_function, torch.ones(2, dtype=torch.float64), 0.02),
-
         # TODO: These don't quite work
         # (beale_function, torch.tensor([3, 0.5], dtype=torch.float64), 1e-4),
         # (bukin_function_6, torch.tensor([-10.0, 1.0], dtype=torch.float64), 1e-4),
         # (easom_function, torch.tensor([torch.pi, torch.pi], dtype=torch.float64), 1e-4),
-
         # gets caught in local minima
         # (rastrigrin_function, torch.zeros(2, dtype=torch.float64), 0.001),
     ],
@@ -210,14 +218,16 @@ def test_optimises_reference_functions(
     fixed_random_seed: int,
     function: Callable[[torch.Tensor], torch.Tensor],
     minima: torch.Tensor,
-        tolerance: float,
+    tolerance: float,
 ) -> None:
     rng = np.random.default_rng(fixed_random_seed)
     scale = max(float(minima.abs().max()), 1.0)
     initial_guess = torch.tensor(rng.normal(0.0, scale, size=(16, minima.size(-1))))
     solver = BFGSSolver(iterations=2000, error_threshold=1e-8)
     result = solver(initial_guess, function)
-    assert torch.isclose(result, minima.unsqueeze(0).expand_as(result), atol=tolerance).all()
+    assert torch.isclose(
+        result, minima.unsqueeze(0).expand_as(result), atol=tolerance
+    ).all()
 
 
 def test_fit_plane_with_noise(fixed_random_seed: int) -> None:
@@ -282,3 +292,60 @@ def test_can_be_compiled(fixed_random_seed) -> None:
     complied_solver = torch.compile(solver)
     result = complied_solver(initial_guess, square_error)
     assert torch.isclose(result, torch.zeros_like(result), atol=error_threshold).all()
+
+
+def test_update_inverse_hessian_matches_bfgs_formula() -> None:
+    # The desired formula is:
+    # H_{k+1} = (I - (s_k y^T_k) / (s^T_k y_k)) H_k (I - (y_k s^T_k) / (s^T_k y_k)) + (s_k s^T_k) / (s^T_k y_k)
+    # Where H_k is the inverse hessian,
+    step = torch.tensor([-1.26262069, -0.78272035, 0.98543104], dtype=torch.float64)
+    delta_gradient = torch.tensor(
+        [0.15339519, -0.28944666, 0.54194925], dtype=torch.float64
+    )
+    inverse_hessian = torch.tensor(
+        [
+            [2.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 3.0],
+        ],
+        dtype=torch.float64,
+    )
+
+    curvature = (step * delta_gradient).sum()
+    assert curvature > 0.0
+    left_matrix = torch.eye(3) - (step[:, None] * delta_gradient[None, :]) / curvature
+    right_matrix = torch.eye(3) - (delta_gradient[:, None] * step[None, :]) / curvature
+    step_outer_product = step[:, None] * step[None, :] / curvature
+    expected_result = left_matrix @ inverse_hessian @ right_matrix + step_outer_product
+
+    result = BFGSSolver.update_inverse_hessian(inverse_hessian, step, delta_gradient)
+    assert torch.isclose(expected_result, result).all()
+
+
+@pytest.mark.parametrize(
+    "delta_gradient",
+    [
+        # Curvature of zero
+        torch.tensor([0.0, 0.0, -3.0], dtype=torch.float64),
+        # Negative curvature
+        torch.tensor([0.0, -1.0, -3.0], dtype=torch.float64),
+    ],
+)
+def test_update_inverse_hessian_does_nothing_when_curvature_is_or_negative(
+    delta_gradient: torch.Tensor,
+) -> None:
+    # Curvature is s^T_k y_k, that is, the dot product of the step and delta_gradient.
+    # BFGS requires that this value remains positive to ensure that the inverse hessian
+    # remains positive-definite.
+    # At this stage, when the curvature is non-positive, we skip the update.
+    step = torch.tensor([1.0, 2.0, 0.0], dtype=torch.float64)
+    inverse_hessian = torch.tensor(
+        [
+            [2.0, -1.0, 0.0],
+            [-1.0, 2.0, -1.0],
+            [0.0, -1.0, 2.0],
+        ],
+        dtype=torch.float64,
+    )
+    result = BFGSSolver.update_inverse_hessian(inverse_hessian, step, delta_gradient)
+    assert torch.equal(result, inverse_hessian)
