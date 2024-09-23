@@ -14,6 +14,8 @@
 # License along with this library; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301
 # USA
+import math
+
 import pytest
 import numpy as np
 import torch
@@ -25,14 +27,14 @@ from deep_attention_visual_odometry.geometry.homogeneous_projection import (
 
 
 def test_project_single_point_inside_image():
-    f = 1.0899
+    f = 0.0899
     cx = -0.1
     cy = 0.15
     x = 1.0
     y = -2.0
     z = 15.0
-    u = f * x / z + cx
-    v = f * y / z + cy
+    u = math.exp(f) * x / z + cx
+    v = math.exp(f) * y / z + cy
     camera_intrinsics = torch.tensor([f, cx, cy], dtype=torch.float64)
     point = torch.tensor([x, y, z], dtype=torch.float64)
     pixel = project_points_pinhole_homogeneous(point, camera_intrinsics)
@@ -43,13 +45,13 @@ def test_project_single_point_inside_image():
 
 
 def test_project_point_on_image_plane():
-    f = 2.0899
+    f = -2.0899
     cx = -0.1
     cy = 0.15
     x = 12.0
     y = -2.0
     z = 0.0
-    expected_result = torch.tensor([f * x, f * y, 0.0], dtype=torch.float64)
+    expected_result = torch.tensor([math.exp(f) * x, math.exp(f) * y, 0.0], dtype=torch.float64)
     camera_intrinsics = torch.tensor([f, cx, cy], dtype=torch.float64)
     point = torch.tensor([x, y, z], dtype=torch.float64)
     pixel = project_points_pinhole_homogeneous(point, camera_intrinsics)
@@ -73,8 +75,8 @@ def test_project_point_behind_camera():
     x = 1.0
     y = -2.0
     z = -0.125
-    u = f * x + cx * z
-    v = f * y + cy * z
+    u = math.exp(f) * x + cx * z
+    v = math.exp(f) * y + cy * z
     expected_result = torch.tensor([u, v, z], dtype=torch.float64)
     camera_intrinsics = torch.tensor([f, cx, cy], dtype=torch.float64)
     point = torch.tensor([x, y, z], dtype=torch.float64)
@@ -89,8 +91,8 @@ def test_project_point_close_to_camera():
     x = -0.0000012
     y = -0.0000023
     z = 0.000007
-    u = f * x + cx * z
-    v = f * y + cy * z
+    u = math.exp(f) * x + cx * z
+    v = math.exp(f) * y + cy * z
     expected_result = torch.tensor([u, v, z], dtype=torch.float64)
     camera_intrinsics = torch.tensor([f, cx, cy], dtype=torch.float64)
     point = torch.tensor([x, y, z], dtype=torch.float64)

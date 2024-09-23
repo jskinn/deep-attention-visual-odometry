@@ -28,13 +28,13 @@ def project_points_pinhole_homogeneous(
     This function does not do any normalization.
 
     Uses a 3-parameter pinhole camera model, with intrinsics:
-    [[f, 0, cx], [0, f, cy], [0, 0, 1]]
+    [[e^f, 0, cx], [0, e^f, cy], [0, 0, 1]]
 
     :param points: A (B...)x3 vector of world points to project
     :param intrinsics: A (B...)x3 vector of camera intrinsics: (fx, cx, cy)
     :return: A (B..)x3 tensor of those world points projected to homogeneous coordinates
     """
-    focal_length = intrinsics[..., 0:1]
+    focal_length = intrinsics[..., 0:1].exp()
     principal_point = intrinsics[..., 1:3]
     xy = points[..., 0:2]
     z = points[..., 2:3]
