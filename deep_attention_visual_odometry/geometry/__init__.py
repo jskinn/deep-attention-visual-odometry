@@ -17,5 +17,6 @@
 from .axis_angle_rotation import rotate_vector_axis_angle
 from .camera_projection import project_points_basic_pinhole
 from .clamped_camera_projection import project_points_clamped_pinhole
+from .homogeneous_projection import project_points_pinhole_homogeneous
 from .projective_plane_angle_distance import projective_plane_angle_distance
 from .projective_plane_cosine_distance import projective_plane_cosine_distance
