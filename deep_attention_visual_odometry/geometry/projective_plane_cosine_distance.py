@@ -15,12 +15,12 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301
 # USA
 import torch
+from torch.nn.functional import cosine_similarity
 
 
 def projective_plane_cosine_distance(
     projective_points_a: torch.Tensor,
     projective_points_b: torch.Tensor,
-    keepdim: bool = False,
 ) -> torch.Tensor:
     """
     A cosine distance between pairs of homogeneous coordinates.
@@ -38,12 +38,4 @@ def projective_plane_cosine_distance(
     :param keepdim: Whether to retain the final dimension of size 1
     :return: A (B...) or (B...)x1 tensor of the distances between each pair of coordinates
     """
-    projective_points_a = projective_points_a / torch.linalg.vector_norm(
-        projective_points_a, dim=-1, keepdim=True
-    )
-    projective_points_b = projective_points_b / torch.linalg.vector_norm(
-        projective_points_b, dim=-1, keepdim=True
-    )
-    return 1.0 - (projective_points_a * projective_points_b).sum(
-        dim=-1, keepdims=keepdim
-    )
+    return 1.0 - cosine_similarity(projective_points_a, projective_points_b, dim=-1)
