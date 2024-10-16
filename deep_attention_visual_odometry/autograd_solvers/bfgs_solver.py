@@ -57,11 +57,7 @@ class BFGSSolver(Module):
         parameters: torch.Tensor,
         error_function: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
     ):
-        if parameters.requires_grad:
-            create_graph = True
-        else:
-            create_graph = False
-            parameters = parameters.requires_grad_()
+        create_graph = parameters.requires_grad
         batch_dimensions = parameters.shape[:-1]
         parameter_dim = parameters.size(-1)
         updating = torch.ones(
@@ -93,10 +89,13 @@ class BFGSSolver(Module):
 
             # Compute the error and gradient for the updating parameters
             updating_parameters = parameters[updating]
-            updating_error = error_function(updating_parameters, updating)
-            updating_gradient = torch.autograd.grad(
-                updating_error.sum(), updating_parameters, create_graph=create_graph
-            )
+            if not updating_parameters.requires_grad:
+                updating_parameters.requires_grad_(True)
+            with torch.enable_grad():
+                updating_error = error_function(updating_parameters, updating)
+                updating_gradient = torch.autograd.grad(
+                    updating_error.sum(), updating_parameters, create_graph=create_graph
+                )
             error = error.masked_scatter(updating, updating_error)
             gradient = gradient.masked_scatter(
                 updating.unsqueeze(-1).expand_as(gradient), updating_gradient[0]

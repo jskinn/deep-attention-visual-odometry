@@ -42,7 +42,7 @@ def test_returns_step_length_that_reduces_error(strong_conditions: bool) -> None
     base_error = error_function(parameters, None)
     base_gradient = torch.autograd.grad(base_error, parameters)
     result = line_search_wolfe_conditions(
-        parameters,
+        parameters.detach(),
         search_direction,
         base_error,
         base_gradient[0],
@@ -269,7 +269,7 @@ def test_finds_easy_solution(strong_conditions: bool) -> None:
     base_gradient = torch.autograd.grad(base_error.sum(), initial_guess)
 
     result = line_search_wolfe_conditions(
-        initial_guess,
+        initial_guess.detach(),
         search_direction,
         base_error,
         base_gradient[0],
@@ -294,7 +294,7 @@ def test_produces_small_change_when_search_direction_is_wrong(
     base_gradient = torch.autograd.grad(base_error.sum(), initial_guess)
 
     result = line_search_wolfe_conditions(
-        initial_guess,
+        initial_guess.detach(),
         search_direction,
         base_error,
         base_gradient[0],
@@ -351,6 +351,32 @@ def test_does_not_propagate_gradients(strong_conditions: bool) -> None:
     )
 
     assert not result.requires_grad
+
+
+def test_works_inside_no_grad_block(strong_conditions: bool) -> None:
+    target_point = torch.tensor([2.8 - 1.0, 1.0 + 0.2])
+    parameters = torch.tensor([2.0, -3.0], requires_grad=True)
+    search_direction = torch.tensor([0.2, 1.0])
+
+    def error_function(x: torch.Tensor, _) -> torch.Tensor:
+        return torch.linalg.vector_norm(x - target_point, dim=-1)
+
+    base_error = error_function(parameters, None)
+    base_gradient = torch.autograd.grad(base_error, parameters)
+    with torch.no_grad():
+        result = line_search_wolfe_conditions(
+            parameters,
+            search_direction,
+            base_error,
+            base_gradient[0],
+            error_function,
+            strong=strong_conditions,
+        )
+
+    assert result.shape == torch.Size([])
+    assert torch.greater(result, 0.0).all()
+    error_after_step = error_function(parameters + result * search_direction, None)
+    assert torch.less(error_after_step, base_error)
 
 
 class DemoWolfeConditionsModule(Module):

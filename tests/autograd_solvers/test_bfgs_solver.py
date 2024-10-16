@@ -282,6 +282,16 @@ def test_result_requires_grad_matches_input(requires_grad) -> None:
     assert result.requires_grad == requires_grad
 
 
+def test_works_inside_no_grad_block() -> None:
+    error_threshold = 1e-6
+    initial_guess = torch.tensor([1.1, 2.3])
+    solver = BFGSSolver(error_threshold=error_threshold)
+    with torch.no_grad():
+        result = solver(initial_guess, square_error)
+    final_error = log_square_error(result, torch.tensor(True))
+    assert torch.isclose(final_error, torch.tensor(0.0), atol=error_threshold).all()
+
+
 def test_can_be_compiled(fixed_random_seed) -> None:
     error_threshold = 1e-6
     rng = np.random.default_rng(fixed_random_seed)

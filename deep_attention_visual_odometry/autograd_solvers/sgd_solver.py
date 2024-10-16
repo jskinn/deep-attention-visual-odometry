@@ -31,14 +31,13 @@ class SGDSolver(Module):
         parameters: torch.Tensor,
         error_function: Callable[[torch.Tensor], torch.Tensor],
     ):
-        if parameters.requires_grad:
-            create_graph = True
-        else:
-            create_graph = False
-            parameters = parameters.requires_grad_()
+        create_graph = parameters.requires_grad
         for idx in range(self.iterations):
-            error = error_function(parameters)
-            gradient = torch.autograd.grad(error.sum(), parameters, create_graph=create_graph)
+            if not parameters.requires_grad:
+                parameters.requires_grad_(True)
+            with torch.enable_grad():
+                error = error_function(parameters).sum()
+            gradient = torch.autograd.grad(error, parameters, create_graph=create_graph)
             parameters = parameters - self.learning_rate * gradient[0]
         if not create_graph:
             parameters = parameters.detach()

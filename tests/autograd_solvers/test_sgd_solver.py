@@ -124,6 +124,14 @@ def test_passes_through_gradients(fixed_random_seed: int) -> None:
     assert torch.all(torch.greater(torch.abs(initial_guess.grad), 0))
 
 
+def test_works_inside_no_grad_block() -> None:
+    initial_guess = torch.tensor([1.1, 2.3])
+    solver = SGDSolver(iterations=100, learning_rate=1e-1)
+    with torch.no_grad():
+        result = solver(initial_guess, square_error)
+    assert torch.isclose(result, torch.zeros_like(initial_guess)).all()
+
+
 def test_can_be_compiled() -> None:
     initial_guess = torch.tensor([1.1, 2.3], requires_grad=True)
     solver = SGDSolver(iterations=100, learning_rate=1e-1)

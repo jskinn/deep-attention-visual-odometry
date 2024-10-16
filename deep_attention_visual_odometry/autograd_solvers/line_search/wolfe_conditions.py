@@ -134,10 +134,11 @@ def line_search_wolfe_conditions(
         updating_alpha = (
             candidate_alpha[updating].clone().unsqueeze(-1).requires_grad_(True)
         )
-        updating_error = error_function(
-            parameters[updating] + updating_alpha * search_direction[updating], updating
-        )
-        updating_gradient = torch.autograd.grad(updating_error.sum(), updating_alpha)
+        with torch.enable_grad():
+            updating_error = error_function(
+                parameters[updating] + updating_alpha * search_direction[updating], updating
+            )
+            updating_gradient = torch.autograd.grad(updating_error.sum(), updating_alpha)
         candidate_error[updating] = updating_error.detach()
         candidate_gradient[updating] = updating_gradient[0].squeeze(-1).detach()
 
