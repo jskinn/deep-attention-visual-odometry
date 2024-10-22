@@ -50,10 +50,10 @@ def projective_plane_angle_distance(
     # Rearranging gives the above equation.
     projective_points_a = projective_points_a / torch.linalg.vector_norm(
         projective_points_a, dim=-1, keepdim=True
-    )
+    ).clamp(min=2.220446049250313e-16)
     projective_points_b = projective_points_b / torch.linalg.vector_norm(
         projective_points_b, dim=-1, keepdim=True
-    )
+    ).clamp(min=2.220446049250313e-16)
     unit_vector_sum = torch.linalg.vector_norm(
         projective_points_a + projective_points_b, dim=-1, keepdim=keepdim
     )

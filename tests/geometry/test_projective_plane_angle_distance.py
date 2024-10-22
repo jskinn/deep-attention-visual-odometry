@@ -27,86 +27,105 @@ from deep_attention_visual_odometry.geometry.projective_plane_angle_distance imp
 )
 
 
+@pytest.fixture(params=[torch.float32, torch.float64])
+def float_type(request) -> torch.dtype:
+    return request.param
+
+
 @pytest.mark.parametrize("angle", [math.pi * idx / 36 for idx in range(37)])
-def test_returns_angle_between_unit_vectors(angle: float) -> None:
-    reference_vector = torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32)
-    vector = torch.tensor([math.sin(angle), 0.0, math.cos(angle)], dtype=torch.float32)
+def test_returns_angle_between_unit_vectors(
+    float_type: torch.dtype, angle: float
+) -> None:
+    reference_vector = torch.tensor([0.0, 0.0, 1.0], dtype=float_type)
+    vector = torch.tensor([math.sin(angle), 0.0, math.cos(angle)], dtype=float_type)
     result = projective_plane_angle_distance(reference_vector, vector)
     assert float(result) == pytest.approx(angle, rel=0.0, abs=1.5e-6)
 
 
 @pytest.mark.parametrize("angle", [math.pi * idx / 39 for idx in range(40)])
 def test_returns_angle_between_vectors_of_arbitrary_length(
-    fixed_random_seed: int, angle: float
+    float_type: torch.dtype, fixed_random_seed: int, angle: float
 ) -> None:
     rng = np.random.default_rng(fixed_random_seed)
     lengths = rng.uniform(0.0, 10000.0, size=2)
-    vector_1 = torch.tensor([0.0, lengths[0], 0.0], dtype=torch.float32)
+    vector_1 = torch.tensor([0.0, lengths[0], 0.0], dtype=float_type)
     vector_2 = torch.tensor(
         [0.0, lengths[1] * math.cos(angle), lengths[1] * math.sin(angle)],
-        dtype=torch.float32,
+        dtype=float_type,
     )
     result = projective_plane_angle_distance(vector_1, vector_2)
     assert float(result) == pytest.approx(angle, rel=0.0, abs=5e-6)
 
 
-def test_returns_nan_if_given_zeros() -> None:
-    zeros = torch.zeros(3)
-    other_vector = torch.tensor([1.0, 2.0, 4.0])
-    result = projective_plane_angle_distance(zeros, other_vector)
-    assert torch.isnan(result).all()
-    result = projective_plane_angle_distance(other_vector, zeros)
-    assert torch.isnan(result).all()
+def test_returns_ninety_degrees_if_given_zeros(
+    float_type: torch.dtype, fixed_random_seed: int
+) -> None:
+    rng = np.random.default_rng(fixed_random_seed)
+    zeros = torch.zeros(3, dtype=float_type)
+    other_vectors = torch.tensor(rng.normal(7, 3), dtype=float_type)
+    pi_on_2 = torch.tensor(torch.pi / 2, dtype=float_type)
+    result = projective_plane_angle_distance(zeros, other_vectors)
+    assert torch.equal(result, pi_on_2)
+    result = projective_plane_angle_distance(other_vectors, zeros)
+    assert torch.equal(result, pi_on_2)
+
+
+def test_angle_between_zeros_is_zero(float_type: torch.dtype) -> None:
+    zeros = torch.zeros(3, dtype=float_type)
     result = projective_plane_angle_distance(zeros, zeros)
-    assert torch.isnan(result).all()
+    assert result == 0.0
 
 
-def test_returns_zero_if_given_parallel_vectors() -> None:
-    vector_1 = torch.tensor([3.0, 0.5, -0.4096])
+def test_returns_zero_if_given_parallel_vectors(float_type: torch.dtype) -> None:
+    vector_1 = torch.tensor([3.0, 0.5, -0.4096], dtype=float_type)
     vector_2 = 2.125 * vector_1
     result = projective_plane_angle_distance(vector_1, vector_2)
-    assert result == 0.0  # pytest.approx(0.0, rel=0, abs=1e-7)
+    assert result == pytest.approx(0.0, rel=0, abs=2e-16)
 
 
-def test_supports_batch_and_broadcasts(fixed_random_seed: int) -> None:
+def test_supports_batch_and_broadcasts(
+    fixed_random_seed: int, float_type: torch.dtype
+) -> None:
     rng = np.random.default_rng(fixed_random_seed)
-    vector_1 = torch.tensor(rng.normal(size=(4, 5, 1, 3)))
-    vector_2 = torch.tensor(rng.normal(size=(4, 1, 6, 3)))
+    vector_1 = torch.tensor(rng.normal(size=(4, 5, 1, 3)), dtype=float_type)
+    vector_2 = torch.tensor(rng.normal(size=(4, 1, 6, 3)), dtype=float_type)
     result = projective_plane_angle_distance(vector_1, vector_2)
     assert result.shape == (4, 5, 6)
 
 
-def test_keepdim_retains_final_dimension(fixed_random_seed: int) -> None:
+def test_keepdim_retains_final_dimension(
+    fixed_random_seed: int, float_type: torch.dtype
+) -> None:
     rng = np.random.default_rng(fixed_random_seed)
-    vector_1 = torch.tensor(rng.normal(size=(2, 3, 1, 3)))
-    vector_2 = torch.tensor(rng.normal(size=(2, 1, 6, 3)))
+    vector_1 = torch.tensor(rng.normal(size=(2, 3, 1, 3)), dtype=float_type)
+    vector_2 = torch.tensor(rng.normal(size=(2, 1, 6, 3)), dtype=float_type)
     result = projective_plane_angle_distance(vector_1, vector_2, keepdim=True)
     assert result.shape == (2, 3, 6, 1)
 
 
-def test_is_commutative(fixed_random_seed: int) -> None:
+def test_is_commutative(fixed_random_seed: int, float_type: torch.dtype) -> None:
     rng = np.random.default_rng(fixed_random_seed)
-    vector_1 = torch.tensor(rng.normal(size=(1, 2, 3, 3)))
-    vector_2 = torch.tensor(rng.normal(size=(4, 1, 3, 3)))
+    vector_1 = torch.tensor(rng.normal(size=(1, 2, 3, 3)), dtype=float_type)
+    vector_2 = torch.tensor(rng.normal(size=(4, 1, 3, 3)), dtype=float_type)
     result_1 = projective_plane_angle_distance(vector_1, vector_2)
     result_2 = projective_plane_angle_distance(vector_2, vector_1)
     assert torch.equal(result_1, result_2)
 
 
 def test_angle_between_vectors_is_zero_for_identical_vectors(
-    fixed_random_seed: int,
+    fixed_random_seed: int, float_type: torch.dtype
 ) -> None:
     rng = np.random.default_rng(fixed_random_seed)
-    vectors = torch.tensor(rng.normal(size=(7, 3)), dtype=torch.float64)
+    vectors = torch.tensor(rng.normal(size=(7, 3)), dtype=float_type)
     result = projective_plane_angle_distance(vectors, vectors)
     assert torch.equal(result, torch.zeros_like(result))
 
 
 def test_angle_between_vectors_is_pi_for_negative_vectors(
-    fixed_random_seed: int,
+    fixed_random_seed: int, float_type: torch.dtype
 ) -> None:
     rng = np.random.default_rng(fixed_random_seed)
-    vectors = torch.tensor(rng.normal(size=(7, 3)))
+    vectors = torch.tensor(rng.normal(size=(7, 3)), dtype=float_type)
     result = projective_plane_angle_distance(vectors, -1.0 * vectors)
     assert torch.isclose(
         result, math.pi * torch.ones_like(result), rtol=0.0, atol=1e-7
@@ -142,27 +161,29 @@ def test_supports_needle_like_triangles():
     torch.equal(result, torch.tensor(angle, dtype=torch.float32))
 
 
-@pytest.mark.parametrize("axis", [0, 1, 2])
+@pytest.mark.parametrize(
+    "np_float_type",
+    [np.float32, np.float64],
+)
+@pytest.mark.parametrize("axes", [(0,), (1,), (2,), (0, 1), (0, 2), (1, 2), (0, 1, 2)])
 @pytest.mark.parametrize("change_direction", [10000.0, -10000.0])
 def test_is_relatively_stable_for_small_changes(
-    axis: int, change_direction: float
+    np_float_type, axes: tuple[int, ...], change_direction: float
 ) -> None:
-    vector_values = (-0.84278762, 3.2473695, -1.18345099)
-    base_vector = torch.tensor(vector_values, dtype=torch.float64)
-
-    def step_vector(values: tuple[float, float, float]) -> tuple[float, float, float]:
-        if axis == 0:
-            return np.nextafter(values[0], change_direction), values[1], values[2]
-        elif axis == 1:
-            return values[0], np.nextafter(values[1], change_direction), values[2]
-        return values[0], values[1], np.nextafter(values[2], change_direction)
+    values_array = np.array([-0.84278762, 3.2473695, -1.18345099], dtype=np_float_type)
+    axis_mask = np.zeros(3, dtype=bool)
+    axis_mask[list(axes)] = True
+    change_direction = np.array(change_direction, dtype=np_float_type)
+    base_vector = torch.from_numpy(values_array.copy())
 
     results = []
     for step_idx in range(100):
-        vector_values = step_vector(vector_values)
-        vector = torch.tensor(vector_values, dtype=torch.float64)
+        np.nextafter(values_array, change_direction, where=axis_mask, out=values_array)
+        vector = torch.from_numpy(values_array.copy())
+        assert not torch.equal(base_vector, vector)
         result = projective_plane_angle_distance(base_vector, vector)
         results.append(float(result))
+
     assert (
         sum(result_2 >= result_1 for result_1, result_2 in zip(results, results[1:]))
         > 90
