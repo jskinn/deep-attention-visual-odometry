@@ -22,20 +22,58 @@ import torch
 from torch.nn import Module
 
 from deep_attention_visual_odometry.geometry.homogeneous_projection import (
+    pixel_coordinates_to_homogeneous,
     project_points_pinhole_homogeneous,
 )
 
 
-def test_project_single_point_inside_image():
+def test_pixel_coordinates_to_homogeneous() -> None:
     f = 0.0899
+    cx = -0.1
+    cy = 0.15
+    u = 0.448
+    v = -0.334
+    projected_points = torch.tensor([u, v], dtype=torch.float64)
+    intrinsics = torch.tensor([f, cx, cy], dtype=torch.float64)
+    result = pixel_coordinates_to_homogeneous(projected_points, intrinsics)
+    assert isinstance(result, torch.Tensor)
+    assert result.shape == (3,)
+    assert result[0] == u - cx
+    assert result[1] == v - cy
+    assert result[2] == f + 1.0
+
+
+def test_pixel_coordinates_to_homogeneous_handles_batch_and_broadcasts(fixed_random_seed: int) -> None:
+    rng = np.random.default_rng(fixed_random_seed)
+    projected_points = torch.tensor(rng.normal(size=(1, 7, 2)))
+    intrinsics = torch.tensor(rng.normal(size=(4, 1, 3)))
+    result = pixel_coordinates_to_homogeneous(projected_points, intrinsics)
+    assert isinstance(result, torch.Tensor)
+    assert result.shape == (4, 7, 3)
+
+def test_pixel_coordinates_to_homogeneous_never_produces_negative_z(fixed_random_seed: int) -> None:
+    rng = np.random.default_rng(fixed_random_seed)
+    projected_points = torch.tensor(rng.normal(size=(65, 2)))
+    intrinsics = torch.tensor(rng.normal(size=(65, 3)))
+    intrinsics[:, 0] = torch.linspace(-32.0, 32.0, 65)
+    result = pixel_coordinates_to_homogeneous(projected_points, intrinsics)
+    assert result.shape == (65, 3)
+    assert (result[:, 2] >= 0).all()
+    assert torch.equal(result[intrinsics[:, 0] >= 0, 2], intrinsics[intrinsics[:, 0] >= 0, 0] + 1.0)
+    assert torch.allclose(result[intrinsics[:, 0] < 0, 2], torch.exp(intrinsics[intrinsics[:, 0] < 0, 0]))
+
+
+@pytest.mark.parametrize("focal_length", [-0.0899, 0.0899])
+def test_project_single_point_inside_image(focal_length: float):
+    f = focal_length + 1 if focal_length >= 0.0 else math.exp(focal_length)
     cx = -0.1
     cy = 0.15
     x = 1.0
     y = -2.0
     z = 15.0
-    u = math.exp(f) * x / z + cx
-    v = math.exp(f) * y / z + cy
-    camera_intrinsics = torch.tensor([f, cx, cy], dtype=torch.float64)
+    u = f * x / z + cx
+    v = f * y / z + cy
+    camera_intrinsics = torch.tensor([focal_length, cx, cy], dtype=torch.float64)
     point = torch.tensor([x, y, z], dtype=torch.float64)
     pixel = project_points_pinhole_homogeneous(point, camera_intrinsics)
     assert pixel.shape == (3,)
@@ -55,7 +93,7 @@ def test_project_point_on_image_plane():
     camera_intrinsics = torch.tensor([f, cx, cy], dtype=torch.float64)
     point = torch.tensor([x, y, z], dtype=torch.float64)
     pixel = project_points_pinhole_homogeneous(point, camera_intrinsics)
-    assert torch.equal(pixel, expected_result)
+    assert torch.allclose(pixel, expected_result)
 
 
 def test_project_origin():
@@ -91,8 +129,8 @@ def test_project_point_close_to_camera():
     x = -0.0000012
     y = -0.0000023
     z = 0.000007
-    u = math.exp(f) * x + cx * z
-    v = math.exp(f) * y + cy * z
+    u = (f + 1.0) * x + cx * z
+    v = (f + 1.0) * y + cy * z
     expected_result = torch.tensor([u, v, z], dtype=torch.float64)
     camera_intrinsics = torch.tensor([f, cx, cy], dtype=torch.float64)
     point = torch.tensor([x, y, z], dtype=torch.float64)
