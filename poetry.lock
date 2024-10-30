@@ -3172,6 +3172,20 @@ slack = ["slack-sdk"]
 telegram = ["requests"]
 
 [[package]]
+name = "transforms3d"
+version = "0.4.2"
+description = "Functions for 3D coordinate transformations"
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "transforms3d-0.4.2-py3-none-any.whl", hash = "sha256:1c70399d9e9473ecc23311fd947f727f7c69ed0b063244828c383aa1aefa5941"},
+    {file = "transforms3d-0.4.2.tar.gz", hash = "sha256:e8b5df30eaedbee556e81c6938e55aab5365894e47d0a17615d7db7fd2393680"},
+]
+
+[package.dependencies]
+numpy = ">=1.15"
+
+[[package]]
 name = "triton"
 version = "3.0.0"
 description = "A language and compiler for custom Deep Learning operations"
@@ -3486,4 +3500,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<4.0"
-content-hash = "9fb4336b232db2b4b5020d076d7cd4559280bc93cedcfca593bab4cd8ffcad1c"
+content-hash = "e60ec81797d7ff8d6cb8d88708439bce81dfe69613941504a098af184dc80dab"
