@@ -19,8 +19,7 @@ from typing import NamedTuple
 import torch
 
 from deep_attention_visual_odometry.geometry import (
-    rotate_vector_axis_angle,
-    project_points_pinhole_homogeneous,
+    rotate_vector_axis_angle
 )
 
 
@@ -38,6 +37,16 @@ def unpack_calibration_parameters(
 ) -> CalibrationParameters:
     """
     Unpack and reshape a vector of parameters into separate parameters for the camera intrinsics
+
+    :param parameters: A tensor of parameters to the model. (B...)x(3 + 3*num_points + 6 * (num_views - 1)).
+                       Raises a ValueError if the tensor shape doesn't match the num_views and num_points parameters.
+    :param num_views: The number of views in the model, M.
+    :param num_points: The number of world points in the model, N.
+    :returns: A NamedTuple of the different tensor slices:
+              - Camera intrinsics Bx1x1x3
+              - World points Bx1xNx3
+              - Camera translations Bx(M-1)x1x3
+              - Camera rotations: Bx(M-1)x1x3
     """
     if parameters.size(-1) != (3 + 3 * num_points + 6 * (num_views - 1)):
         raise ValueError(
@@ -66,41 +75,31 @@ def unpack_calibration_parameters(
     )
 
 
-def calibration_pinhole_camera_model(
-    parameters: torch.Tensor,
-    num_views: int,
-    num_points: int,
+def get_camera_relative_points(
+    parameters: CalibrationParameters
 ) -> torch.Tensor:
     """
-    Project world points to camera views as if for camera calibration.
+    Project world points relative to camera views as if for camera calibration.
     That is, given n 3D points, project each one to m different cameras.
-    Each camera has its own position and orientation in 3D space. All cameras have the same intrinsics.
+    Each camera has its own position and orientation in 3D space.
     This problem is determined up to scale and choice of origin.
     We therefore make the following assumptions to fully constrain the problem:
     - The position and orientation of the first view define the origin
     - The standard deviation of the world points is 1. This sets the scale.
 
-    :param parameters: A tensor of parameters to the model. (B...)x(3 + 3*num_points + 6 * (num_views - 1)).
-                       Raises a ValueError if the tensor shape doesn't match the num_views and num_points parameters.
-    :param num_views: The number of views in the model, M.
-    :param num_points: The number of world points in the model, N.
-    :returns: A (B...)xMxNx3 tensor of homogeneous image coordinates.
+    :param parameters: A tuple of different parameter tensors, the return value of `unpack_calibration_parameters`.
+    :returns: A (B...)xMxNx3 tensor of world points relative to each view.
     """
-    calibration_parameters = unpack_calibration_parameters(parameters, num_views, num_points)
-
     # Transform each point to be relative to each viewpoint
     # The first viewpoint has translation and rotation 0, so we just concatenate untransformed points.
     camera_relative_points = rotate_vector_axis_angle(
-        calibration_parameters.world_points, calibration_parameters.camera_rotations
+        parameters.world_points, parameters.camera_rotations
     )
     camera_relative_points = (
-        camera_relative_points + calibration_parameters.camera_translations
+        camera_relative_points + parameters.camera_translations
     )
     camera_relative_points = torch.concatenate(
-        [calibration_parameters.world_points, camera_relative_points], dim=-3
+        [parameters.world_points, camera_relative_points], dim=-3
     )
 
-    # Project the camera points to homogeneous coordinates
-    return project_points_pinhole_homogeneous(
-        camera_relative_points, calibration_parameters.intrinsics
-    )
+    return camera_relative_points
