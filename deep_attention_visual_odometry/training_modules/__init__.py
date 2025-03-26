@@ -1,1 +1,2 @@
+from .camera_calibration_training_module import CameraCalibrationTrainingModule
 from .camera_optimisation_training_module import CameraOptmisationTrainingModule
