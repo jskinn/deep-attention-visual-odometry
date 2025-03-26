@@ -76,7 +76,9 @@ def unpack_calibration_parameters(
 
 
 def get_camera_relative_points(
-    parameters: CalibrationParameters
+    world_points: torch.Tensor,
+    camera_translations: torch.Tensor,
+    camera_rotations: torch.Tensor,
 ) -> torch.Tensor:
     """
     Project world points relative to camera views as if for camera calibration.
@@ -87,19 +89,29 @@ def get_camera_relative_points(
     - The position and orientation of the first view define the origin
     - The standard deviation of the world points is 1. This sets the scale.
 
-    :param parameters: A tuple of different parameter tensors, the return value of `unpack_calibration_parameters`.
-    :returns: A (B...)xMxNx3 tensor of world points relative to each view.
+    :param world_points: (Bx)1xNx3 tensor of world points
+    :param camera_translations: (Bx)Mx1x3 tensor of camera translations.
+    :param camera_rotations: (Bx)Mx1x3 tensor of axis-angle rotations for each view.
+    :returns: A (B...)xMxNx3 tensor of points relative to each view.
     """
+    # Uniformly re-scale all the points so that the mean distance from the first camera is 1.
+    num_points = world_points.size(-2)
+    num_views = camera_translations.size(-3) + 1
+    points_scale = world_points.abs().mean(dim=(-1, -2, -3))
+    camera_scale = camera_translations.abs().mean(dim=(-1, -2, -3))
+    overall_scale = (points_scale * num_points + camera_scale * num_views) / (num_points + num_views)
+    camera_translations = camera_translations / overall_scale
+    world_points = world_points / overall_scale
     # Transform each point to be relative to each viewpoint
     # The first viewpoint has translation and rotation 0, so we just concatenate untransformed points.
     camera_relative_points = rotate_vector_axis_angle(
-        parameters.world_points, parameters.camera_rotations
+        world_points, camera_rotations
     )
     camera_relative_points = (
-        camera_relative_points + parameters.camera_translations
+        camera_relative_points + camera_translations
     )
     camera_relative_points = torch.concatenate(
-        [parameters.world_points, camera_relative_points], dim=-3
+        [world_points, camera_relative_points], dim=-3
     )
 
     return camera_relative_points
