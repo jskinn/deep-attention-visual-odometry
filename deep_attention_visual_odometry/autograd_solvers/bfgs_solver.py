@@ -35,6 +35,15 @@ class BFGSSolver(Module):
     Jp = r, both of which (according to "The Levenberg-Marquardt algorithm: implementation and theory" by Jorge More)
     are numerically unstable.
     BFGS allows us to avoid inverting the Jacobian, which is an O(n^3) operation.
+
+    During training, iterating to convergence will eliminate all the gradients
+    (imagine there is a simple optima, this module effectively replaces all inputs with that optima.
+    the output does not vary with the input, and so the gradient is zero).
+    To avoid this, we want to stop optimising before an optima is reached.
+    We have a few strategies for this, because it's unclear which is the most effective:
+    - Random stopping, similar to dropout/drop path
+    - Returning the second-last parameters value
+    - separate training and validation iterations/error criteria. This lets the val step iterate to convergence.
     """
 
     def __init__(
@@ -44,6 +53,10 @@ class BFGSSolver(Module):
         error_threshold: float = 1e-4,
         iterations: int = 1000,
         minimum_step: float = 1e-8,
+        drop_path_p: float = 0.1,
+        return_second_last: bool = False,
+        training_iterations: int = None,
+        training_error_threshold: float = None,
     ):
         super().__init__()
         self.sufficient_decrease = float(sufficient_decrease)
@@ -51,6 +64,18 @@ class BFGSSolver(Module):
         self.error_threshold = float(error_threshold)
         self.iterations = int(iterations)
         self.minimum_step = float(minimum_step)
+        self.drop_path_p = float(drop_path_p)
+        self.return_second_last = bool(return_second_last)
+        self.training_iterations = (
+            int(training_iterations)
+            if training_iterations is not None
+            else self.iterations
+        )
+        self.training_error_threshold = (
+            float(training_error_threshold)
+            if training_error_threshold is not None
+            else self.error_threshold
+        )
 
     def forward(
         self,
@@ -60,6 +85,12 @@ class BFGSSolver(Module):
         create_graph = parameters.requires_grad
         batch_dimensions = parameters.shape[:-1]
         parameter_dim = parameters.size(-1)
+        if self.training:
+            error_threshold = self.training_error_threshold
+            num_iterations = self.training_iterations
+        else:
+            error_threshold = self.error_threshold
+            num_iterations = self.iterations
         updating = torch.ones(
             batch_dimensions, dtype=torch.bool, device=parameters.device
         )
@@ -84,8 +115,14 @@ class BFGSSolver(Module):
             device=parameters.device,
         )
         inverse_hessian[..., range(parameter_dim), range(parameter_dim)] = 1.0
-        for step_idx in range(self.iterations):
+        for step_idx in range(num_iterations):
             prev_gradient = gradient
+
+            # During training, randomly stop optimising to preserve gradients
+            if self.training and self.drop_path_p > 0.0:
+                updating = updating & torch.greater(
+                    torch.rand_like(updating, dtype=torch.float32), self.drop_path_p
+                )
 
             # Compute the error and gradient for the updating parameters
             updating_parameters = parameters[updating]
@@ -103,7 +140,7 @@ class BFGSSolver(Module):
 
             # Stop updating when the error falls below a threshold
             # This synchronises the GPU.
-            updating = updating & torch.greater(error.detach(), self.error_threshold)
+            updating = updating & torch.greater(error.detach(), error_threshold)
             if not torch.any(updating):
                 break
 
@@ -156,9 +193,10 @@ class BFGSSolver(Module):
             step = step.masked_scatter(
                 updating.unsqueeze(-1).expand_as(step), updating_step
             )
-            parameters = parameters.masked_scatter(
-                updating.unsqueeze(-1).expand_as(parameters), updating_parameters
-            )
+            if not self.training or not self.return_second_last:
+                parameters = parameters.masked_scatter(
+                    updating.unsqueeze(-1).expand_as(parameters), updating_parameters
+                )
 
             # Stop updating if the step distance is basically zero
             # This synchronises the GPU.
@@ -167,6 +205,11 @@ class BFGSSolver(Module):
             )
             if not torch.any(updating):
                 break
+            # If we want to return the second_last, skip he
+            if self.training and self.return_second_last:
+                parameters = parameters.masked_scatter(
+                    updating.unsqueeze(-1).expand_as(parameters), updating_parameters
+                )
         if not create_graph:
             parameters = parameters.detach()
         return parameters
